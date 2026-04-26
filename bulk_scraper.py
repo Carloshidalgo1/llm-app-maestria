@@ -3,12 +3,17 @@ from bs4 import BeautifulSoup
 import trafilatura
 import os
 import time
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
 
 def get_urls():
-    sitemap_url = "https://alimentoscarnicos.com.co/wp-sitemap-posts-page-1.xml"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    sitemap_url = os.getenv('SITEMAP_URL', "https://alimentoscarnicos.com.co/wp-sitemap-posts-page-1.xml")
+    headers = {"User-Agent": os.getenv('USER_AGENT', "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")}
+    timeout = int(os.getenv('REQUEST_TIMEOUT', 10))
     try:
-        response = requests.get(sitemap_url, headers=headers, verify=False, timeout=10)
+        response = requests.get(sitemap_url, headers=headers, verify=False, timeout=timeout)
         soup = BeautifulSoup(response.content, 'xml')
         urls = [loc.text for loc in soup.find_all('loc')]
         return urls
@@ -18,7 +23,7 @@ def get_urls():
 
 def scrape_pages():
     urls = get_urls()
-    folder = "dataset_carnicos"
+    folder = os.getenv('OUTPUT_DIR', "dataset_carnicos")
     if not os.path.exists(folder):
         os.makedirs(folder)
     
@@ -26,7 +31,7 @@ def scrape_pages():
 
     # Usamos una sesión de requests para mantener la conexión
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+    session.headers.update({"User-Agent": os.getenv('USER_AGENT', "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")})
 
     for i, url in enumerate(urls):
         slug = url.split("/")[-2] if url.endswith("/") else url.split("/")[-1]
@@ -35,7 +40,8 @@ def scrape_pages():
         
         try:
             # 1. Descargamos el HTML manualmente para ver si el servidor responde
-            resp = session.get(url, verify=False, timeout=10)
+            timeout = int(os.getenv('REQUEST_TIMEOUT', 10))
+            resp = session.get(url, verify=False, timeout=timeout)
             
             if resp.status_code == 200:
                 # 2. Intentamos extraer

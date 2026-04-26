@@ -2,9 +2,39 @@
 
 Pipeline para construir un corpus en Markdown a partir de páginas web y PDFs del sector cárnico/ganadero. Los documentos resultantes se guardan en `dataset_carnicos/`.
 
+## Instalación y Ejecución
+
+Este proyecto utiliza un entorno virtual Python y un Makefile para facilitar la ejecución.
+
+### Requisitos previos
+- Python 3.8+
+- Make (en Windows, instalar con Chocolatey o similar)
+
+### Configuración inicial
+1. Clona o descarga el proyecto.
+2. Configura el entorno virtual y instala dependencias:
+   ```
+   make install
+   ```
+   Esto crea el entorno virtual en `venv/` e instala las dependencias de `requirements.txt`.
+
+### Variables de entorno
+El proyecto utiliza un archivo `.env` para configurar variables como URLs, timeouts y directorios de salida. Edita `.env` según tus necesidades:
+
+- `BASE_URL`: URL base para scraping individual.
+- `SITEMAP_URL`: URL del sitemap para bulk scraping.
+- `OUTPUT_DIR`: Directorio donde guardar los archivos generados.
+- `REQUEST_TIMEOUT`: Timeout en segundos para requests.
+- `USER_AGENT`: User-Agent para las requests.
+
+### Comandos disponibles
+- `make run`: Ejecuta el bulk scraper (scraping masivo de URLs desde un sitemap).
+- `make pdf`: Ejecuta el extractor de PDFs (`pdf_pro_extractor.py`).
+- `make clean`: Limpia archivos generados en `dataset_carnicos/`.
+
 ## Scripts principales
 
-- `scraper.py` / `bulk_scraper.py` — scraping web.
+- `bulk_scraper.py` — scraping web masivo desde un sitemap XML.
 - `pdf_to_md.py` — extracción rápida de texto plano con PyMuPDF (sin layout ni tablas).
 - `pdf_pro_extractor.py` — extracción estructurada con [Docling](https://github.com/DS4SD/docling) (layout, tablas, OCR) **con procesamiento por lotes**.
 
