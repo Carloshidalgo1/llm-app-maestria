@@ -1,101 +1,120 @@
-# Webscraping + Extracción de PDFs (corpus cárnicos)
+# Carnicos KB
 
-Pipeline para construir un corpus en Markdown a partir de páginas web y PDFs del sector cárnico/ganadero. Los documentos resultantes se guardan en `dataset_carnicos/`.
+Proyecto Python para construir una base de conocimiento en Markdown sobre **Alimentos Carnicos S.A.S.** a partir de scraping web, extraccion de PDFs y segmentacion en chunks para alimentar un LLM.
 
-## Instalación y Ejecución
+## Estructura
 
-Este proyecto utiliza un entorno virtual Python y un Makefile para facilitar la ejecución.
-
-### Requisitos previos
-- Python 3.8+
-- Make (en Windows, instalar con Chocolatey o similar)
-
-### Configuración inicial
-1. Clona o descarga el proyecto.
-2. Configura el entorno virtual y instala dependencias:
-   ```
-   make install
-   ```
-   Esto crea el entorno virtual en `venv/` e instala las dependencias de `requirements.txt`.
-
-### Variables de entorno
-El proyecto utiliza un archivo `.env` para configurar variables como URLs, timeouts y directorios de salida. Edita `.env` según tus necesidades:
-
-- `BASE_URL`: URL base para scraping individual.
-- `SITEMAP_URL`: URL del sitemap para bulk scraping.
-- `OUTPUT_DIR`: Directorio donde guardar los archivos generados.
-- `REQUEST_TIMEOUT`: Timeout en segundos para requests.
-- `USER_AGENT`: User-Agent para las requests.
-
-### Comandos disponibles
-- `make run`: Ejecuta el bulk scraper (scraping masivo de URLs desde un sitemap).
-- `make pdf`: Ejecuta el extractor de PDFs (`pdf_pro_extractor.py`).
-- `make clean`: Limpia archivos generados en `dataset_carnicos/`.
-
-## Scripts principales
-
-- `bulk_scraper.py` — scraping web masivo desde un sitemap XML.
-- `pdf_to_md.py` — extracción rápida de texto plano con PyMuPDF (sin layout ni tablas).
-- `pdf_pro_extractor.py` — extracción estructurada con [Docling](https://github.com/DS4SD/docling) (layout, tablas, OCR) **con procesamiento por lotes**.
-
-## Extracción por lotes con Docling (`pdf_pro_extractor.py`)
-
-### Por qué
-Al correr Docling sobre PDFs largos en CPU, el pipeline de preprocesado (RapidOCR + análisis de layout) carga todas las páginas en memoria a la vez. En documentos de 40+ páginas esto provocaba errores del tipo:
-
-```
-Stage preprocess failed for run 1, pages [34]: std::bad_alloc
-Stage preprocess failed for run 1, pages [35]: std::bad_alloc
-...
+```text
+.
+├── data/
+│   ├── raw/
+│   │   └── pdfs/                  # PDFs fuente
+│   └── processed/
+│       ├── dataset_carnicos/       # Markdown extraido
+│       └── base_conocimiento_chunks.md
+├── docs/
+│   ├── Requisitos.txt
+│   └── definicion_alcance.md
+├── src/
+│   └── carnicos_kb/
+│       ├── chunking.py
+│       ├── pdf_extractor.py
+│       ├── pdf_text_extractor.py
+│       └── scraper.py
+├── tests/
+├── Makefile
+├── pyproject.toml
+└── uv.lock
 ```
 
-Con la consecuencia de perder decenas de páginas por documento.
+## Requisitos
 
-### Estrategia
-En lugar de convertir el PDF completo en una sola llamada, el script:
+- Python 3.10+
+- `uv`
+- `make`
+- Opcional en Windows: Chocolatey para instalar herramientas base
 
-1. **Cuenta las páginas** del PDF con `pypdfium2` (`get_page_count`).
-2. **Itera en ventanas de `BATCH_SIZE` páginas** (por defecto 5) e invoca a Docling con el parámetro `page_range=(start, end)`, de modo que cada llamada reserva memoria únicamente para ese subconjunto.
-3. **Exporta cada lote a Markdown** y lo acumula en una lista.
-4. **Libera el resultado intermedio** (`del result` + `gc.collect()`) antes de pedir el siguiente lote, evitando que los tensores de OCR, imágenes renderizadas y estructuras de layout se acumulen entre iteraciones.
-5. **Aísla fallos por lote**: si un rango concreto falla, se inserta un marcador `<!-- ERROR extracting pages X-Y: ... -->` en el Markdown y se continúa con el siguiente, en vez de abortar todo el documento.
-6. **Concatena** los fragmentos y los persiste en `dataset_carnicos/<nombre>.md`.
+Instalacion con Chocolatey:
 
-### Configuración
-`BATCH_SIZE` está definido como constante al inicio del archivo:
-
-```python path=pdf_pro_extractor.py start=11
-BATCH_SIZE = 5
+```powershell
+choco install -y python uv make git
 ```
 
-Recomendaciones:
+Tambien puedes usar el target:
 
-- **Máquinas con poca RAM o PDFs con muchas imágenes/OCR pesado:** baja a `3` o incluso `2`.
-- **Máquinas con RAM holgada y PDFs “limpios” (texto vectorial):** puedes subir a `10` para reducir el overhead de reinicializar el pipeline.
-- El `DocumentConverter` se instancia **una sola vez** y se reutiliza entre lotes y entre documentos, por lo que los modelos de Docling/RapidOCR se cargan una única vez.
-
-### Resultado de la validación
-
-Ejecutado sobre el corpus de prueba (PDF de 90 páginas que previamente fallaba desde la página 34):
-
-- **0** errores `std::bad_alloc` (antes: 57 páginas perdidas en ese único documento).
-- Pico de memoria trazado por Python estable en ~150–180 MiB entre lotes.
-- Markdown final con tablas y encabezados reconstruidos correctamente (~99 headings y ~64 tablas en el documento de referencia).
-- `~3.5 s/página` en CPU.
-
-## Uso
-
-```powershell path=null start=null
-# 1. Dejar los PDFs fuente en ./pdf/
-# 2. Ejecutar el extractor
-python pdf_pro_extractor.py
-# 3. Revisar los .md generados en ./dataset_carnicos/
+```powershell
+make bootstrap-choco
 ```
 
-Si aparece `std::bad_alloc` con algún PDF especialmente pesado, reduce `BATCH_SIZE` en `pdf_pro_extractor.py` y vuelve a ejecutar.
+## Instalacion
 
-## Dependencias clave
+Con `uv`:
 
-- `docling` (>= 2.90)
-- `pypdfium2` (viene como dependencia transitiva de Docling; se usa explícitamente para contar páginas)
-- `rapidocr` (dependencia transitiva de Docling para OCR)
+```powershell
+make sync
+```
+
+Con `pip`, si no quieres usar `uv`:
+
+```powershell
+make install-pip
+```
+
+Las dependencias se declaran en `pyproject.toml`. `uv.lock` conserva las versiones resueltas para instalaciones reproducibles.
+
+## Comandos principales
+
+```powershell
+make scrape
+make pdf
+make pdf-fast
+make chunk
+make test
+make lint
+```
+
+Equivalentes directos con `uv`:
+
+```powershell
+uv run carnicos-scrape --output-dir data/processed/dataset_carnicos
+uv run carnicos-pdf --input-dir data/raw/pdfs --output-dir data/processed/dataset_carnicos
+uv run carnicos-chunk --input-dir data/processed/dataset_carnicos --output data/processed/base_conocimiento_chunks.md
+uv run --extra dev pytest --basetemp .pytest_tmp
+```
+
+## Flujo de trabajo
+
+1. Guardar PDFs fuente en `data/raw/pdfs/`.
+2. Ejecutar `make scrape` para extraer paginas del sitio web.
+3. Ejecutar `make pdf` para extraer PDFs con Docling, o `make pdf-fast` para extraccion rapida con PyMuPDF.
+4. Ejecutar `make chunk` para generar `data/processed/base_conocimiento_chunks.md`.
+5. Usar `data/processed/base_conocimiento_chunks.md` como contexto del prompt de sistema del LLM.
+
+## Variables de entorno
+
+El proyecto puede leer `.env`. Usa `.env.example` como plantilla:
+
+```text
+SITEMAP_URL=https://alimentoscarnicos.com.co/wp-sitemap-posts-page-1.xml
+OUTPUT_DIR=data/processed/dataset_carnicos
+REQUEST_TIMEOUT=10
+REQUEST_DELAY=2
+USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+```
+
+Si tu `.env` anterior apunta a `dataset_carnicos`, actualizalo a `data/processed/dataset_carnicos` para seguir la nueva estructura.
+
+## Modulos
+
+- `carnicos_kb.scraper`: scraping web desde sitemap XML con `requests`, `BeautifulSoup` y `trafilatura`.
+- `carnicos_kb.pdf_extractor`: conversion estructurada de PDFs a Markdown con Docling, por lotes.
+- `carnicos_kb.pdf_text_extractor`: conversion rapida de PDFs a Markdown con PyMuPDF.
+- `carnicos_kb.chunking`: limpieza conservadora y chunking semantico de Markdown.
+
+## Pruebas
+
+```powershell
+make test
+```
+
+Las pruebas unitarias actuales validan limpieza, division por encabezados, construccion de chunks y renderizado del Markdown final.

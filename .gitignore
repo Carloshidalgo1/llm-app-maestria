@@ -1,6 +1,14 @@
 ﻿venv/
 .venv/
 __pycache__/
-*.pyc
+.pytest_cache/
+.pytest_tmp/
+.ruff_cache/
+*.py[cod]
 .env
+.env.*
+!.env.example
+build/
+dist/
+*.egg-info/
 dataset_carnicos_sample/

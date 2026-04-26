@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "carnicos-kb"
+version = "0.1.0"
+description = "Pipeline de scraping, extraccion PDF y chunking para una base de conocimiento de Alimentos Carnicos."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "docling>=2.90",
+    "langchain>=0.1",
+    "langchain-openai>=0.1",
+    "lxml>=5.0",
+    "openai>=1.0",
+    "pymupdf>=1.24",
+    "pypdfium2>=4.30",
+    "python-dotenv>=1.0",
+    "requests>=2.32",
+    "trafilatura>=1.12",
+    "urllib3>=2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[project.scripts]
+carnicos-chunk = "carnicos_kb.chunking:main"
+carnicos-pdf = "carnicos_kb.pdf_extractor:main"
+carnicos-pdf-fast = "carnicos_kb.pdf_text_extractor:main"
+carnicos-scrape = "carnicos_kb.scraper:main"
+carnicos-qa = "carnicos_kb.qa_system:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/carnicos_kb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+

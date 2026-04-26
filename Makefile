@@ -1,31 +1,82 @@
-.PHONY: help install run clean
+SHELL := powershell.exe
+.SHELLFLAGS := -NoProfile -ExecutionPolicy Bypass -Command
 
-# Variables
-VENV_DIR = venv
-PYTHON = $(VENV_DIR)/Scripts/python
-PIP = $(VENV_DIR)/Scripts/pip
-ACTIVATE = $(VENV_DIR)/Scripts/activate
+.DEFAULT_GOAL := help
+
+PYTHON ?= python
+UV ?= uv
+
+PDF_DIR ?= data/raw/pdfs
+DATASET_DIR ?= data/processed/dataset_carnicos
+CHUNKS_FILE ?= data/processed/base_conocimiento_chunks.md
+MAX_CHARS ?= 3200
+BATCH_SIZE ?= 5
+
+.PHONY: help bootstrap-choco sync install install-pip test test-pip lint scrape pdf pdf-fast chunk pipeline qa clean clean-data
 
 help:
-	@echo "Comandos disponibles:"
-	@echo "  make install    - Instalar dependencias en el entorno virtual"
-	@echo "  make run        - Ejecutar el bulk scraper (scraping masivo)"
-	@echo "  make pdf        - Ejecutar el extractor de PDFs"
-	@echo "  make clean      - Limpiar archivos generados"
-	@echo "  make venv       - Crear entorno virtual"
+	$(info Comandos disponibles:)
+	$(info   make bootstrap-choco - Instalar python, uv, make y git con Chocolatey)
+	$(info   make sync            - Crear/actualizar entorno con uv)
+	$(info   make install         - Alias de make sync)
+	$(info   make install-pip     - Instalar con pip en .venv sin uv)
+	$(info   make test            - Ejecutar pytest con uv)
+	$(info   make lint            - Ejecutar ruff)
+	$(info   make scrape          - Ejecutar scraping web)
+	$(info   make pdf             - Extraer PDFs con Docling)
+	$(info   make pdf-fast        - Extraer PDFs con PyMuPDF)
+	$(info   make chunk           - Generar base de conocimiento segmentada)
+	$(info   make pipeline        - Ejecutar scraping, PDF y chunking)
+	$(info   make qa              - Iniciar sistema Q&A interactivo)
+	$(info   make clean           - Limpiar caches y chunks generados)
+	@Write-Host "" -NoNewline
 
-venv:
-	python -m venv $(VENV_DIR)
+bootstrap-choco:
+	choco install -y python uv make git
 
-install: venv
-	$(PIP) install -r requirements.txt
+sync:
+	$(UV) sync --extra dev
 
-run: install
-	$(PYTHON) bulk_scraper.py
+install: sync
 
-pdf: install
-	$(PYTHON) pdf_pro_extractor.py
+install-pip:
+	$(PYTHON) -m venv .venv
+	.\.venv\Scripts\python.exe -m pip install --upgrade pip
+	.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+test:
+	$(UV) run --extra dev pytest --basetemp .pytest_tmp
+
+test-pip:
+	.\.venv\Scripts\python.exe -m pytest --basetemp .pytest_tmp
+
+lint:
+	$(UV) run --extra dev ruff check src tests
+
+scrape:
+	$(UV) run carnicos-scrape --output-dir "$(DATASET_DIR)"
+
+pdf:
+	$(UV) run carnicos-pdf --input-dir "$(PDF_DIR)" --output-dir "$(DATASET_DIR)" --batch-size $(BATCH_SIZE)
+
+pdf-fast:
+	$(UV) run carnicos-pdf-fast --input-dir "$(PDF_DIR)" --output-dir "$(DATASET_DIR)"
+
+chunk:
+	$(UV) run carnicos-chunk --input-dir "$(DATASET_DIR)" --output "$(CHUNKS_FILE)" --max-chars $(MAX_CHARS)
+
+pipeline: scrape pdf chunk
+
+qa:
+	$(UV) run carnicos-qa
 
 clean:
-	rm -rf dataset_carnicos/*.md
-	rm -rf __pycache__
+	if (Test-Path "$(CHUNKS_FILE)") { Remove-Item -LiteralPath "$(CHUNKS_FILE)" -Force }
+	if (Test-Path ".pytest_cache") { Remove-Item -LiteralPath ".pytest_cache" -Recurse -Force }
+	if (Test-Path ".pytest_tmp") { Remove-Item -LiteralPath ".pytest_tmp" -Recurse -Force }
+	if (Test-Path ".ruff_cache") { Remove-Item -LiteralPath ".ruff_cache" -Recurse -Force }
+	Get-ChildItem -Path src,tests -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
+
+clean-data:
+	if (Test-Path "$(DATASET_DIR)") { Remove-Item -LiteralPath "$(DATASET_DIR)" -Recurse -Force }
+	if (Test-Path "$(CHUNKS_FILE)") { Remove-Item -LiteralPath "$(CHUNKS_FILE)" -Force }
