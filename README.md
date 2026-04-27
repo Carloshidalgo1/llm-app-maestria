@@ -71,6 +71,7 @@ make pdf-fast
 make chunk
 make test
 make lint
+make app
 ```
 
 Equivalentes directos con `uv`:
@@ -79,6 +80,7 @@ Equivalentes directos con `uv`:
 uv run carnicos-scrape --output-dir data/processed/dataset_carnicos
 uv run carnicos-pdf --input-dir data/raw/pdfs --output-dir data/processed/dataset_carnicos
 uv run carnicos-chunk --input-dir data/processed/dataset_carnicos --output data/processed/base_conocimiento_chunks.md
+uv run carnicos-app --server.address localhost --server.port 8501
 uv run --extra dev pytest --basetemp .pytest_tmp
 ```
 
@@ -89,6 +91,7 @@ uv run --extra dev pytest --basetemp .pytest_tmp
 3. Ejecutar `make pdf` para extraer PDFs con Docling, o `make pdf-fast` para extraccion rapida con PyMuPDF.
 4. Ejecutar `make chunk` para generar `data/processed/base_conocimiento_chunks.md`.
 5. Usar `data/processed/base_conocimiento_chunks.md` como contexto del prompt de sistema del LLM.
+6. Ejecutar `make app` para abrir la interfaz Streamlit del asistente Q&A.
 
 ## Variables de entorno
 
@@ -100,6 +103,11 @@ OUTPUT_DIR=data/processed/dataset_carnicos
 REQUEST_TIMEOUT=10
 REQUEST_DELAY=2
 USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+OPENAI_API_KEY=sk_test_tu_api_key_aqui
+OPENAI_MODEL=gpt-5.4-nano
+OPENAI_TEMPERATURE=0.2
+OPENAI_MAX_TOKENS=1500
+CARNICOS_KNOWLEDGE_PATH=data/processed/base_conocimiento_chunks.md
 ```
 
 Si tu `.env` anterior apunta a `dataset_carnicos`, actualizalo a `data/processed/dataset_carnicos` para seguir la nueva estructura.
@@ -110,6 +118,8 @@ Si tu `.env` anterior apunta a `dataset_carnicos`, actualizalo a `data/processed
 - `carnicos_kb.pdf_extractor`: conversion estructurada de PDFs a Markdown con Docling, por lotes.
 - `carnicos_kb.pdf_text_extractor`: conversion rapida de PDFs a Markdown con PyMuPDF.
 - `carnicos_kb.chunking`: limpieza conservadora y chunking semantico de Markdown.
+- `carnicos_kb.qa_system`: asistente Q&A sobre la base de conocimiento.
+- `carnicos_kb.streamlit_app`: interfaz web Streamlit con chat, alcance, guia rapida y estado de la base.
 
 ## Pruebas
 

@@ -19,6 +19,7 @@ dependencies = [
     "pypdfium2>=4.30",
     "python-dotenv>=1.0",
     "requests>=2.32",
+    "streamlit>=1.38",
     "trafilatura>=1.12",
     "urllib3>=2.2",
 ]
@@ -35,6 +36,7 @@ carnicos-pdf = "carnicos_kb.pdf_extractor:main"
 carnicos-pdf-fast = "carnicos_kb.pdf_text_extractor:main"
 carnicos-scrape = "carnicos_kb.scraper:main"
 carnicos-qa = "carnicos_kb.qa_system:main"
+carnicos-app = "carnicos_kb.streamlit_runner:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/carnicos_kb"]
@@ -46,4 +48,3 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-

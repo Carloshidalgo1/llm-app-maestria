@@ -11,8 +11,10 @@ DATASET_DIR ?= data/processed/dataset_carnicos
 CHUNKS_FILE ?= data/processed/base_conocimiento_chunks.md
 MAX_CHARS ?= 3200
 BATCH_SIZE ?= 5
+STREAMLIT_HOST ?= localhost
+STREAMLIT_PORT ?= 8501
 
-.PHONY: help bootstrap-choco sync install install-pip test test-pip lint scrape pdf pdf-fast chunk pipeline qa clean clean-data
+.PHONY: help bootstrap-choco sync install install-pip test test-pip lint scrape pdf pdf-fast chunk pipeline qa app streamlit clean clean-data
 
 help:
 	$(info Comandos disponibles:)
@@ -28,6 +30,7 @@ help:
 	$(info   make chunk           - Generar base de conocimiento segmentada)
 	$(info   make pipeline        - Ejecutar scraping, PDF y chunking)
 	$(info   make qa              - Iniciar sistema Q&A interactivo)
+	$(info   make app             - Iniciar interfaz web Streamlit)
 	$(info   make clean           - Limpiar caches y chunks generados)
 	@Write-Host "" -NoNewline
 
@@ -69,6 +72,11 @@ pipeline: scrape pdf chunk
 
 qa:
 	$(UV) run carnicos-qa
+
+app:
+	$(UV) run carnicos-app --server.address "$(STREAMLIT_HOST)" --server.port $(STREAMLIT_PORT)
+
+streamlit: app
 
 clean:
 	if (Test-Path "$(CHUNKS_FILE)") { Remove-Item -LiteralPath "$(CHUNKS_FILE)" -Force }
