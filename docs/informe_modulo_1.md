@@ -289,21 +289,6 @@ Limitaciones identificadas:
 
 ---
 
-## 6. Presentacion y demostracion
-
-La sustentacion debe realizarse en vivo, sin presentacion de PowerPoint, usando el repositorio y la interfaz Streamlit.
-
-### Guion sugerido de 15 minutos
-
-| Tiempo | Actividad |
-|---:|---|
-| 2 min | Explicar el problema y el alcance del asistente. |
-| 3 min | Mostrar fuentes, scraping, PDFs y base de conocimiento. |
-| 3 min | Explicar limpieza, chunking y archivo consolidado. |
-| 3 min | Explicar Q&A, prompt engineering y restricciones anti-alucinacion. |
-| 3 min | Demostrar la interfaz Streamlit con preguntas dentro y fuera del alcance. |
-| 1 min | Cerrar con limitaciones y evolucion hacia RAG en modulo 2. |
-
 ### Comandos para la demostracion
 
 ```powershell
@@ -320,7 +305,7 @@ make app STREAMLIT_PORT=8502
 
 ---
 
-## 7. Conclusiones
+## 6. Conclusiones
 
 El proyecto cumple la base tecnica del modulo 1: construye una base de conocimiento a partir de informacion publica, procesa documentos en Markdown, segmenta el contenido en chunks y ofrece un sistema Q&A funcional con una interfaz web en Streamlit.
 
