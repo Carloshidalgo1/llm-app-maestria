@@ -237,7 +237,7 @@ Estas pruebas verifican:
 
 La siguiente matriz recoge las 20 preguntas definidas en el alcance del proyecto. Deben ejecutarse en la interfaz Streamlit o por consola para registrar la respuesta exacta del modelo durante la sustentación o validación final.
 
-| # | Pregunta | Respuesta esperada resumida | Criterio de aceptación |
+| # | Pregunta | Respuesta real | Criterio de aceptación |
 |---:|---|---|---|
 | 1 | ¿Qué empresa es Alimentos Cárnicos S.A.S.? | Alimentos Cárnicos S.A.S. es una empresa colombiana del Grupo Nutresa dedicada al procesamiento y conservación de carne y productos cárnicos.<br><br>También realiza actividades como comercio al por mayor de productos alimenticios y comercio al por menor de carnes en establecimientos especializados.<br><br>**Fuente:** informacion_basica.md (sección 1.4) | Identifica razón social y actividad sin inventar datos. |
 | 2 | ¿A qué grupo empresarial pertenece Alimentos Cárnicos? | Alimentos Cárnicos S.A.S. pertenece al Grupo Empresarial Nutresa.<br><br>**Fuente:** informacion_basica.md | Menciona el grupo correcto. |
