@@ -37,6 +37,7 @@ carnicos-pdf-fast = "carnicos_kb.pdf_text_extractor:main"
 carnicos-scrape = "carnicos_kb.scraper:main"
 carnicos-qa = "carnicos_kb.qa_system:main"
 carnicos-app = "carnicos_kb.streamlit_runner:main"
+carnicos-validate-mod1 = "carnicos_kb.validate_module1:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/carnicos_kb"]

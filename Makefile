@@ -14,7 +14,7 @@ BATCH_SIZE ?= 5
 STREAMLIT_HOST ?= localhost
 STREAMLIT_PORT ?= 8501
 
-.PHONY: help bootstrap-choco sync install install-pip test test-pip lint scrape pdf pdf-fast chunk pipeline qa app streamlit clean clean-data
+.PHONY: help bootstrap-choco sync install install-pip test test-pip lint scrape pdf pdf-fast chunk pipeline qa validate-mod1 app streamlit clean clean-data
 
 help:
 	$(info Comandos disponibles:)
@@ -30,6 +30,7 @@ help:
 	$(info   make chunk           - Generar base de conocimiento segmentada)
 	$(info   make pipeline        - Ejecutar scraping, PDF y chunking)
 	$(info   make qa              - Iniciar sistema Q&A interactivo)
+	$(info   make validate-mod1   - Validar base Q&A del Modulo 1)
 	$(info   make app             - Iniciar interfaz web Streamlit)
 	$(info   make clean           - Limpiar caches y chunks generados)
 	@Write-Host "" -NoNewline
@@ -72,6 +73,9 @@ pipeline: scrape pdf chunk
 
 qa:
 	$(UV) run carnicos-qa
+
+validate-mod1:
+	$(UV) run carnicos-validate-mod1
 
 app:
 	$(UV) run carnicos-app --server.address "$(STREAMLIT_HOST)" --server.port $(STREAMLIT_PORT)
