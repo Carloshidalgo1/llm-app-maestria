@@ -151,10 +151,10 @@ def render_sidebar() -> Dict[str, object]:
 
 
 def render_assistant(config: Dict[str, object]) -> None:
-    st.subheader("Pregunta al modelo")
+    st.subheader("Conversacion con memoria")
     st.write(
-        "El asistente responde dentro del alcance definido y debe admitir cuando la "
-        "informacion no exista en la base de conocimiento."
+        "El asistente usa el historial de esta sesion para responder preguntas de "
+        "seguimiento, manteniendo el alcance definido por la base de conocimiento."
     )
 
     if not config["knowledge_path"].exists():
@@ -215,13 +215,14 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
     if not question:
         return
 
+    chat_history = list(st.session_state.messages)
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
 
     with st.chat_message("assistant"):
         with st.spinner("Consultando la base de conocimiento y el modelo..."):
-            answer = qa_system.answer(question)
+            answer = qa_system.answer(question, chat_history=chat_history, remember=False)
         st.markdown(answer)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})

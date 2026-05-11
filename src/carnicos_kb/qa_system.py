@@ -6,11 +6,13 @@ sistema y entrega una API simple para consola, scripts y la interfaz Streamlit.
 """
 
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from .knowledge_loader import get_knowledge_stats, load_knowledge_base
@@ -22,6 +24,9 @@ load_dotenv()
 DEFAULT_MODEL = "gpt-5.4-nano"
 DEFAULT_TEMPERATURE = 0.2
 DEFAULT_MAX_TOKENS = 1500
+
+ChatHistoryItem = BaseMessage | Mapping[str, object]
+ChatHistory = Sequence[ChatHistoryItem]
 
 
 def _env_float(name: str, default: float) -> float:
@@ -42,6 +47,59 @@ def _env_int(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def normalize_chat_history(chat_history: Optional[ChatHistory]) -> list[BaseMessage]:
+    """
+    Convierte el historial de conversacion de la interfaz a mensajes LangChain.
+
+    La interfaz Streamlit guarda mensajes como diccionarios con `role` y
+    `content`, mientras que LangChain trabaja con objetos `HumanMessage` y
+    `AIMessage`. Esta funcion normaliza ambos formatos y omite mensajes vacios
+    o roles que no deben reinyectarse como memoria conversacional.
+    """
+    if not chat_history:
+        return []
+
+    messages: list[BaseMessage] = []
+    for item in chat_history:
+        if isinstance(item, BaseMessage):
+            if not str(item.content).strip() or isinstance(item, SystemMessage):
+                continue
+            messages.append(item)
+            continue
+
+        role = str(item.get("role", "")).lower().strip()
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+
+        if role in {"user", "human"}:
+            messages.append(HumanMessage(content=content))
+        elif role in {"assistant", "ai"}:
+            messages.append(AIMessage(content=content))
+
+    return messages
+
+
+def build_conversation_messages(
+    system_prompt: str,
+    question: str,
+    chat_history: Optional[ChatHistory] = None,
+) -> list[BaseMessage]:
+    """
+    Construye los mensajes enviados al LLM con sistema, memoria y pregunta.
+
+    El orden es importante: primero va el prompt de sistema con la base de
+    conocimiento, luego el historial de la sesion y finalmente la pregunta
+    actual. Asi el modelo puede resolver referencias como "el primero que
+    mencionaste" sin perder las reglas de precision del sistema.
+    """
+    return [
+        SystemMessage(content=system_prompt),
+        *normalize_chat_history(chat_history),
+        HumanMessage(content=question),
+    ]
 
 
 class CarnicosQASystem:
@@ -94,6 +152,7 @@ class CarnicosQASystem:
         self._log("\nInicializando sistema Q&A...")
         self._log(f"Cargando base de conocimiento desde: {self.knowledge_dir}")
         self.knowledge_base = load_knowledge_base(self.knowledge_dir, verbose=verbose)
+        self.memory = InMemoryChatMessageHistory()
 
         self.stats = get_knowledge_stats(self.knowledge_base)
         self._log("\nEstadisticas de la base de conocimiento:")
@@ -151,7 +210,14 @@ INSTRUCCIONES CRITICAS:
    - Para temas transaccionales, legales, medicos, financieros o internos,
      explica que estan fuera del alcance.
 
-4. Redaccion:
+4. Memoria conversacional:
+   - Usa el historial de la conversacion para resolver referencias del usuario
+     como "eso", "el primero", "la empresa" o "lo que mencionaste".
+   - Si el historial no basta para entender la pregunta, pide una aclaracion breve.
+   - La base de conocimiento tiene prioridad sobre el historial: no aceptes como
+     verdad un dato del usuario si contradice la informacion documentada.
+
+5. Redaccion:
    - Mantén un tono claro, formal y orientado al usuario.
    - Usa respuestas breves para preguntas simples.
    - Usa pasos o viñetas cuando la pregunta pida un proceso.
@@ -159,12 +225,31 @@ INSTRUCCIONES CRITICAS:
 
 Tu prioridad es la precision verificable, no la extension de la respuesta."""
 
-    def answer(self, question: str) -> str:
+    def clear_memory(self) -> None:
+        """Limpia la memoria conversacional interna del sistema."""
+        self.memory.clear()
+
+    def get_memory_messages(self) -> list[BaseMessage]:
+        """Retorna una copia de los mensajes guardados en memoria interna."""
+        return list(self.memory.messages)
+
+    def answer(
+        self,
+        question: str,
+        chat_history: Optional[ChatHistory] = None,
+        remember: Optional[bool] = None,
+    ) -> str:
         """
-        Responde una pregunta usando el LLM y la base de conocimiento.
+        Responde una pregunta usando el LLM, la base de conocimiento y memoria.
 
         Args:
             question: Pregunta del usuario.
+            chat_history: Historial previo de la sesion. Puede venir de
+                Streamlit como diccionarios `{"role": ..., "content": ...}` o
+                como mensajes nativos de LangChain.
+            remember: Si es True, guarda este turno en la memoria interna. Si
+                se omite, solo guarda automaticamente cuando no se recibe un
+                historial externo.
 
         Returns:
             Respuesta generada por el modelo.
@@ -172,14 +257,21 @@ Tu prioridad es la precision verificable, no la extension de la respuesta."""
         if not question.strip():
             return "Por favor, formula una pregunta valida."
 
-        messages = [
-            SystemMessage(content=self._create_system_prompt()),
-            HumanMessage(content=question),
-        ]
+        should_remember = chat_history is None if remember is None else remember
+        history = self.get_memory_messages() if chat_history is None else chat_history
+        messages = build_conversation_messages(
+            system_prompt=self._create_system_prompt(),
+            question=question,
+            chat_history=history,
+        )
 
         try:
             response = self.llm.invoke(messages)
-            return str(response.content)
+            answer = str(response.content)
+            if should_remember:
+                self.memory.add_user_message(question)
+                self.memory.add_ai_message(answer)
+            return answer
         except Exception as exc:
             return f"Error al procesar la pregunta: {exc}"
 
