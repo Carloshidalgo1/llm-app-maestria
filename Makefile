@@ -5,6 +5,13 @@ SHELL := powershell.exe
 
 PYTHON ?= python
 UV ?= uv
+UV_CACHE_DIR ?= .uv_cache
+PRE_COMMIT_HOME ?= .pre_commit_cache
+
+export UV_CACHE_DIR
+export PRE_COMMIT_HOME
+
+unexport VIRTUAL_ENV
 
 PDF_DIR ?= data/raw/pdfs
 DATASET_DIR ?= data/processed/dataset_carnicos
@@ -14,7 +21,7 @@ BATCH_SIZE ?= 5
 STREAMLIT_HOST ?= localhost
 STREAMLIT_PORT ?= 8501
 
-.PHONY: help bootstrap-choco sync install install-pip test test-pip lint scrape pdf pdf-fast chunk pipeline qa validate-mod1 app streamlit clean clean-data
+.PHONY: help bootstrap-choco sync install install-pip precommit-install precommit test test-pip lint scrape pdf pdf-fast chunk pipeline qa validate-mod1 app streamlit clean clean-data
 
 help:
 	$(info Comandos disponibles:)
@@ -22,6 +29,8 @@ help:
 	$(info   make sync            - Crear/actualizar entorno con uv)
 	$(info   make install         - Alias de make sync)
 	$(info   make install-pip     - Instalar con pip en .venv sin uv)
+	$(info   make precommit-install - Instalar hooks de pre-commit)
+	$(info   make precommit       - Ejecutar pre-commit en todos los archivos)
 	$(info   make test            - Ejecutar pytest con uv)
 	$(info   make lint            - Ejecutar ruff)
 	$(info   make scrape          - Ejecutar scraping web)
@@ -47,6 +56,12 @@ install-pip:
 	$(PYTHON) -m venv .venv
 	.\.venv\Scripts\python.exe -m pip install --upgrade pip
 	.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+precommit-install:
+	$(UV) run --extra dev pre-commit install
+
+precommit:
+	$(UV) run --extra dev pre-commit run --all-files
 
 test:
 	$(UV) run --extra dev pytest --basetemp .pytest_tmp

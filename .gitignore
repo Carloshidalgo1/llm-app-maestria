@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 .pytest_tmp/
 .ruff_cache/
+.uv_cache/
+.pre_commit_cache/
 *.py[cod]
 .env
 .env.*
