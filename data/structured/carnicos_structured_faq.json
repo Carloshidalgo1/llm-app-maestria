@@ -1,0 +1,236 @@
+{
+  "dataset": "datos_estructurados_carnicos",
+  "purpose": "Preguntas frecuentes que se responden mejor con datos concretos y deterministas.",
+  "records": [
+    {
+      "id": "telefonos_servicio_cliente",
+      "title": "Telefonos de servicio al cliente",
+      "question_examples": [
+        "Cual es el telefono de servicio al cliente?",
+        "Como puedo comunicarme con atencion al cliente?",
+        "Cual es la linea nacional?"
+      ],
+      "keywords": [
+        "telefono",
+        "telefonos",
+        "linea",
+        "atencion",
+        "servicio al cliente",
+        "medellin",
+        "nacional",
+        "contacto"
+      ],
+      "answer": "Medellin: (60) (4) 470 52 22. Resto del pais: 01 8000 519 368.",
+      "source": "data/processed/dataset_carnicos/contacto.md",
+      "notes": "El dato aparece repetido en paginas de contacto, sugerencias, novedades y venta."
+    },
+    {
+      "id": "lineas_marcas_rica_cunit",
+      "title": "Lineas gratuitas por marca",
+      "question_examples": [
+        "Cual es la linea de Rica?",
+        "Cual es la linea de Cunit?",
+        "Telefonos gratuitos por marca"
+      ],
+      "keywords": [
+        "rica",
+        "cunit",
+        "marca",
+        "linea gratuita",
+        "telefono"
+      ],
+      "answer": "RICA: 01 8000 527 300. Cunit: 01 8000 516 999 y 01 8000 526 782.",
+      "source": "data/processed/dataset_carnicos/contacto-ant.md",
+      "notes": "Este dato proviene de una pagina historica llamada contacto-ant.md."
+    },
+    {
+      "id": "sede_principal_yumbo",
+      "title": "Sede principal documentada",
+      "question_examples": [
+        "Donde esta ubicada la sede principal?",
+        "Cual es la direccion en Yumbo?",
+        "Direccion principal de Alimentos Carnicos"
+      ],
+      "keywords": [
+        "sede",
+        "principal",
+        "direccion",
+        "yumbo",
+        "cali",
+        "acopi",
+        "valle"
+      ],
+      "answer": "Sede principal documentada: Carrera 40 # 12A - 13, Acopi, Yumbo, Valle del Cauca.",
+      "source": "docs/definicion_alcance.md",
+      "notes": "La Politica de Habeas Data tambien menciona Carrera 40 # 12 A 13, Acopi, Yumbo, Valle."
+    },
+    {
+      "id": "sedes_comerciales",
+      "title": "Sedes comerciales",
+      "question_examples": [
+        "Listar las sedes comerciales",
+        "Cuales son las agencias?",
+        "Hay agencia en Cali?"
+      ],
+      "keywords": [
+        "sedes",
+        "agencias",
+        "barranquilla",
+        "bogota",
+        "bucaramanga",
+        "cali",
+        "ibague",
+        "medellin",
+        "pereira"
+      ],
+      "answer": "Agencia Barranquilla: Carrera 17 No.30-09, Barrio La Union, telefono (5) 336 92 00. Agencia Bogota: Calle 9 No.68-25, telefono (1) 424 98 00. Agencia Bucaramanga: Calle 9 No.68-25, telefono (1) 424 98 00. Agencia Cali: Carrera 40 No.12-13 Acopio Yumbo, telefono (2) 431 10 00. Agencia Ibague: Km 2 Aeropuerto Via Perales, telefono (8) 271 33 77. Agencia Medellin: Carrera 52 # 1-42, telefono (4) 378 64 00. Agencia Pereira: Calle 10 # 16 A-60 Zona Industrial La Popa, Dos Quebradas, telefonos (6) 330 71 22, 330 71 23 y 330 68 45.",
+      "source": "data/processed/dataset_carnicos/contacto-ant.md",
+      "notes": "La sede de Bucaramanga aparece con la misma direccion y telefono de Bogota en el archivo fuente; conviene verificar en canales oficiales."
+    },
+    {
+      "id": "centros_distribucion",
+      "title": "Centros de distribucion",
+      "question_examples": [
+        "Cuales son los centros de distribucion?",
+        "Direccion del centro de distribucion en Cali",
+        "Centro de distribucion en Medellin"
+      ],
+      "keywords": [
+        "centros de distribucion",
+        "cedi",
+        "regional",
+        "bogota",
+        "barranquilla",
+        "santa marta",
+        "cali",
+        "monteria",
+        "bucaramanga",
+        "ibague",
+        "neiva",
+        "cartagena",
+        "pereira",
+        "medellin"
+      ],
+      "answer": "Bogota: Av. Calle 17 # 129-11. Barranquilla / Santa Marta: Calle 30 # 17-57 Barrio La Union. Cali: Carrera 40 # 12 a 13 Acopi - Yumbo, Cali. Monteria: KM 4 Via Monteria - Planeta Rica, contiguo al CEDI Bavaria. Bucaramanga: Cra. 17 # 58-60 Bod. 6 Giron. Ibague / Neiva: Cra. 45 sur # 169.60 Complejo Don Zoilo - Ibague, Tolima. Cartagena: Mamonal KM 6 Parque Industrial de Parquiamerica Mz D Lote 7. Pereira: Calle 10 # 16 a-60 Zona Industrial La Popa, Dos Quebradas. Medellin: Cr 64 c # 104-03 Pedregal.",
+      "source": "data/processed/dataset_carnicos/contacto-ant.md",
+      "notes": "Datos usados para orientar, no para ejecutar operaciones logisticas."
+    },
+    {
+      "id": "puntos_venta_propios",
+      "title": "Puntos de venta propios",
+      "question_examples": [
+        "Cuales son los puntos de venta propios?",
+        "Punto de venta en Cali",
+        "Telefono del punto de venta en Barranquilla"
+      ],
+      "keywords": [
+        "puntos de venta",
+        "venta",
+        "cali",
+        "bogota",
+        "barranquilla",
+        "parador suizo",
+        "telefono"
+      ],
+      "answer": "Cali: Calle 31 No. 2-04, telefonos (2) 4422637 / 4441166. Bogota: Parador Suizo, telefono (1) 4254400 ext. 122 y 131. Barranquilla: Calle 53 - 43B - 46, telefono (5) 3369292 ext. 52170.",
+      "source": "data/processed/dataset_carnicos/preguntas-frecuentes.md",
+      "notes": "Corresponde a la seccion 'Puntos de Venta propios' del FAQ."
+    },
+    {
+      "id": "nit_empresa",
+      "title": "NIT documentado",
+      "question_examples": [
+        "Cual es el NIT?",
+        "NIT de Alimentos Carnicos",
+        "Identificacion tributaria de la empresa"
+      ],
+      "keywords": [
+        "nit",
+        "identificacion",
+        "tributaria",
+        "empresa"
+      ],
+      "answer": "NIT documentado de Alimentos Carnicos S.A.S.: 890.304.130 - 4.",
+      "source": "data/processed/dataset_carnicos/GranadaBayron2021.md",
+      "notes": "Este registro normaliza el dato como NIT unico para responder de forma directa."
+    },
+    {
+      "id": "fecha_creacion_empresa",
+      "title": "Fecha de creacion",
+      "question_examples": [
+        "Cuando fue creada la empresa?",
+        "Fecha de creacion de Alimentos Carnicos",
+        "Ano de fundacion"
+      ],
+      "keywords": [
+        "fecha",
+        "creacion",
+        "fundacion",
+        "julio",
+        "1935"
+      ],
+      "answer": "La ficha empresarial reporta fecha de creacion: julio 23 de 1935.",
+      "source": "data/processed/dataset_carnicos/GranadaBayron2021.md",
+      "notes": "Dato extraido de la ficha de informacion y perfil empresarial."
+    },
+    {
+      "id": "solicitud_empleo",
+      "title": "Solicitud de empleo",
+      "question_examples": [
+        "Como puedo enviar mi hoja de vida?",
+        "Como aplicar a empleo?",
+        "Practicas empresariales"
+      ],
+      "keywords": [
+        "empleo",
+        "hoja de vida",
+        "trabaje con nosotros",
+        "vacante",
+        "practicas",
+        "aplicar"
+      ],
+      "answer": "Para solicitud de empleo, el FAQ indica ingresar a 'Trabaje con nosotros', cargar la hoja de vida y guardarla. A tu correo llegara una contrasena para ingresar a la pagina y actualizar la informacion. Para practicas empresariales se sigue el mismo proceso.",
+      "source": "data/processed/dataset_carnicos/preguntas-frecuentes.md",
+      "notes": "La herramienta solo orienta; no registra hojas de vida ni consulta vacantes."
+    },
+    {
+      "id": "visitas_planta",
+      "title": "Solicitud de visitas a planta",
+      "question_examples": [
+        "Como solicitar una visita a planta?",
+        "Requisitos para visitas a planta",
+        "Puedo visitar la planta?"
+      ],
+      "keywords": [
+        "visita",
+        "visitas",
+        "planta",
+        "solicitud",
+        "grupo",
+        "visitantes"
+      ],
+      "answer": "Para visitas a planta, el FAQ pide enviar carta con nombre completo, direccion, ciudad, telefono del responsable, nombre de los visitantes y justificacion clara del objetivo. Los visitantes deben ser mayores de 7 anos y el grupo minimo es de 30 personas.",
+      "source": "data/processed/dataset_carnicos/preguntas-frecuentes.md",
+      "notes": "El FAQ aclara que la solicitud se ingresa a una base de datos y se informa telefonicamente si fue aceptada."
+    },
+    {
+      "id": "horarios_atencion",
+      "title": "Horarios de atencion",
+      "question_examples": [
+        "Cual es el horario de atencion?",
+        "A que horas atienden?",
+        "Horario de servicio al cliente"
+      ],
+      "keywords": [
+        "horario",
+        "horarios",
+        "atienden",
+        "atencion",
+        "servicio"
+      ],
+      "answer": "No hay un horario de atencion verificado en los datos estructurados revisados. Para horarios actuales, se debe verificar por las lineas oficiales de servicio al cliente.",
+      "source": "docs/definicion_alcance.md",
+      "notes": "El alcance del asistente exige no inventar horarios si no estan disponibles en la base."
+    }
+  ]
+}

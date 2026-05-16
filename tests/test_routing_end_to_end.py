@@ -37,22 +37,45 @@ libres de jaulas. También trabaja en abastecimiento responsable.
 
 @pytest.fixture()
 def qa_system() -> CarnicosQASystem:
-    """Crea un CarnicosQASystem con LLM mockeado y herramientas reales."""
+    """Crea un CarnicosQASystem con LLM y recuperador Chroma mockeados."""
+    from carnicos_kb.document_retriever_tool import (
+        DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
+        parse_knowledge_chunks,
+    )
+    from carnicos_kb.structured_data_tool import build_structured_data_tool
+    from langchain_core.tools import StructuredTool
+
+    _chunks = parse_knowledge_chunks(SAMPLE_KNOWLEDGE)
+
+    def _fake_documental_search(query: str) -> str:
+        q = query.lower()
+        matched = [
+            c for c in _chunks
+            if any(t in c.text.lower() or t in c.title.lower() for t in q.split() if len(t) > 3)
+        ]
+        return "\n\n".join(c.render() for c in (matched or _chunks)[:3])
+
+    fake_documental_tool = StructuredTool.from_function(
+        name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
+        func=_fake_documental_search,
+        description="Stub documental para pruebas unitarias.",
+    )
+
     with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-fake-key-for-unit-tests"}):
         with patch("carnicos_kb.qa_system.ChatOpenAI"):
-            system = CarnicosQASystem(
-                knowledge_dir=None,
-                model="gpt-test",
-                temperature=0.0,
-                max_tokens=500,
-                verbose=False,
-            )
+            with patch.object(
+                CarnicosQASystem, "_build_documental_tool", return_value=fake_documental_tool
+            ):
+                system = CarnicosQASystem(
+                    knowledge_dir=None,
+                    model="gpt-test",
+                    temperature=0.0,
+                    max_tokens=500,
+                    verbose=False,
+                )
+
     system.knowledge_base = SAMPLE_KNOWLEDGE
-
-    from carnicos_kb.document_retriever_tool import build_documental_knowledge_tool
-    from carnicos_kb.structured_data_tool import build_structured_data_tool
-
-    system.documental_tool = build_documental_knowledge_tool(SAMPLE_KNOWLEDGE)
+    system.documental_tool = fake_documental_tool
     system.structured_tool = build_structured_data_tool()
     system.tools_by_name = {
         system.documental_tool.name: system.documental_tool,

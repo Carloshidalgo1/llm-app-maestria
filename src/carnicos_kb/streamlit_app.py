@@ -4,11 +4,19 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
 import streamlit as st
 from dotenv import load_dotenv
 
 from carnicos_kb.knowledge_loader import get_knowledge_stats
-from carnicos_kb.paths import DEFAULT_CHUNKS_FILE, DEFAULT_DATASET_DIR
+from carnicos_kb.langsmith_config import get_langsmith_status
+from carnicos_kb.paths import (
+    DEFAULT_CHROMA_COLLECTION,
+    DEFAULT_CHROMA_DIR,
+    DEFAULT_CHUNKS_FILE,
+    DEFAULT_DATASET_DIR,
+)
 from carnicos_kb.qa_system import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
@@ -23,10 +31,11 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)
 EXAMPLE_QUESTIONS = [
     "Que empresa es Alimentos Carnicos S.A.S.?",
     "Que marcas hacen parte del portafolio?",
-    "Como puedo radicar una PQRS?",
+    "Cual es el telefono de servicio al cliente?",
+    "Cual es el NIT documentado?",
+    "Listar sedes comerciales",
     "Donde esta ubicada la sede principal?",
     "Que compromisos existen sobre bienestar animal?",
-    "Que temas estan fuera del alcance del asistente?",
 ]
 
 MOJIBAKE_MARKERS = ("Ã", "Â", "â", "ðŸ")
@@ -105,6 +114,14 @@ def render_sidebar() -> Dict[str, object]:
     else:
         st.sidebar.warning("Falta configurar OPENAI_API_KEY")
 
+    langsmith_status = get_langsmith_status()
+    if langsmith_status.ready:
+        st.sidebar.success(f"LangSmith activo: {langsmith_status.project}")
+    elif langsmith_status.tracing_enabled:
+        st.sidebar.warning("LangSmith tracing activo, pero falta API key real")
+    else:
+        st.sidebar.info("LangSmith tracing desactivado")
+
     default_model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     default_temperature = parse_float(os.getenv("OPENAI_TEMPERATURE"), DEFAULT_TEMPERATURE)
     default_max_tokens = parse_int(os.getenv("OPENAI_MAX_TOKENS"), DEFAULT_MAX_TOKENS)
@@ -132,6 +149,8 @@ def render_sidebar() -> Dict[str, object]:
     else:
         st.sidebar.error(f"No existe la base: `{format_path(knowledge_path)}`")
 
+    retriever_config = render_documental_retriever_status()
+
     if st.sidebar.button("Limpiar conversacion", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
@@ -147,6 +166,45 @@ def render_sidebar() -> Dict[str, object]:
         "model": model.strip() or DEFAULT_MODEL,
         "temperature": float(temperature),
         "max_tokens": int(max_tokens),
+        "documental_retriever": retriever_config["backend"],
+    }
+
+
+def render_documental_retriever_status() -> Dict[str, object]:
+    """Muestra si la base documental usa busqueda lexica o Chroma."""
+    backend = os.getenv("CARNICOS_DOCUMENTAL_RETRIEVER", "lexical").strip().lower()
+    if backend not in {"chroma", "lexical", "texto", "documental"}:
+        st.sidebar.warning(
+            "`CARNICOS_DOCUMENTAL_RETRIEVER` no reconocido; se usara `lexical`."
+        )
+        backend = "lexical"
+
+    if backend == "chroma":
+        chroma_dir = resolve_project_path(
+            Path(os.getenv("CHROMA_PERSIST_DIRECTORY", DEFAULT_CHROMA_DIR))
+        )
+        chroma_collection = os.getenv("CHROMA_COLLECTION_NAME", DEFAULT_CHROMA_COLLECTION)
+        if chroma_dir.exists():
+            st.sidebar.success(
+                f"Recuperador documental: Chroma (`{chroma_collection}`)"
+            )
+            st.sidebar.caption(f"Chroma: `{format_path(chroma_dir)}`")
+        else:
+            st.sidebar.warning(
+                "Recuperador documental: Chroma configurado, pero falta construir el indice."
+            )
+            st.sidebar.caption(f"Ruta esperada: `{format_path(chroma_dir)}`")
+        return {
+            "backend": "chroma",
+            "chroma_dir": chroma_dir,
+            "chroma_collection": chroma_collection,
+        }
+
+    st.sidebar.info("Recuperador documental: busqueda lexica")
+    return {
+        "backend": "lexical",
+        "chroma_dir": None,
+        "chroma_collection": None,
     }
 
 
@@ -207,6 +265,12 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message["role"] == "assistant" and message.get("tool_name"):
+                render_agent_trace(
+                    tool_name=str(message.get("tool_name", "")),
+                    tool_reason=str(message.get("tool_reason", "")),
+                    tool_output=str(message.get("tool_output", "")),
+                )
 
     typed_question = st.chat_input("Escribe una pregunta sobre Alimentos Carnicos...")
     pending_question = st.session_state.pop("pending_question", None)
@@ -222,10 +286,41 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
 
     with st.chat_message("assistant"):
         with st.spinner("Consultando la base de conocimiento y el modelo..."):
-            answer = qa_system.answer(question, chat_history=chat_history, remember=False)
+            qa_response = qa_system.answer_with_trace(
+                question,
+                chat_history=chat_history,
+                remember=False,
+            )
+            answer = qa_response.answer
         st.markdown(answer)
+        render_agent_trace(
+            tool_name=qa_response.tool_name,
+            tool_reason=qa_response.tool_reason,
+            tool_output=qa_response.tool_output,
+        )
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": answer,
+            "tool_name": qa_response.tool_name,
+            "tool_reason": qa_response.tool_reason,
+            "tool_output": qa_response.tool_output,
+        }
+    )
+
+
+def render_agent_trace(tool_name: str, tool_reason: str, tool_output: str) -> None:
+    """Muestra la decision del router sin exponer cadena de pensamiento privada."""
+    with st.expander("Ruta del agente", expanded=False):
+        st.write(f"**Herramienta:** `{tool_name}`")
+        if tool_reason:
+            st.write(f"**Motivo:** {tool_reason}")
+        if tool_output:
+            preview = tool_output[:2500]
+            st.code(preview, language="markdown")
+            if len(tool_output) > len(preview):
+                st.caption("Salida de herramienta truncada en la interfaz.")
 
 
 def render_scope() -> None:
@@ -374,11 +469,14 @@ def repair_mojibake(text: str) -> str:
     return repaired if repaired_score < original_score else text
 
 
+def resolve_project_path(path: Path) -> Path:
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
 def resolve_knowledge_path() -> Path:
     env_path = os.getenv("CARNICOS_KNOWLEDGE_PATH")
     if env_path:
-        path = Path(env_path)
-        return path if path.is_absolute() else PROJECT_ROOT / path
+        return resolve_project_path(Path(env_path))
 
     chunks_path = PROJECT_ROOT / DEFAULT_CHUNKS_FILE
     if chunks_path.exists():

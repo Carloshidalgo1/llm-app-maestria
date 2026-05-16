@@ -12,7 +12,9 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "docling>=2.90",
     "langchain>=0.1",
+    "langchain-chroma>=0.1",
     "langchain-openai>=0.1",
+    "langsmith>=0.1",
     "lxml>=5.0",
     "openai>=1.0",
     "pymupdf>=1.24",
@@ -39,6 +41,7 @@ carnicos-scrape = "carnicos_kb.scraper:main"
 carnicos-qa = "carnicos_kb.qa_system:main"
 carnicos-app = "carnicos_kb.streamlit_runner:main"
 carnicos-validate-mod1 = "carnicos_kb.validate_module1:main"
+carnicos-build-rag = "carnicos_kb.rag_index_builder:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/carnicos_kb"]

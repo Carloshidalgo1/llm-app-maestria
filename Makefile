@@ -16,12 +16,15 @@ unexport VIRTUAL_ENV
 PDF_DIR ?= data/raw/pdfs
 DATASET_DIR ?= data/processed/dataset_carnicos
 CHUNKS_FILE ?= data/processed/base_conocimiento_chunks.md
+CHROMA_DIR ?= data/vector_index/chroma
+CHROMA_COLLECTION ?= carnicos_rag
+EMBEDDING_MODEL ?= text-embedding-3-small
 MAX_CHARS ?= 3200
 BATCH_SIZE ?= 5
 STREAMLIT_HOST ?= localhost
 STREAMLIT_PORT ?= 8501
 
-.PHONY: help bootstrap-choco sync install install-pip precommit-install precommit test test-pip lint scrape pdf pdf-fast chunk pipeline qa validate-mod1 app streamlit clean clean-data
+.PHONY: help bootstrap-choco sync install install-pip precommit-install precommit test test-pip lint scrape pdf pdf-fast chunk rag-index rag-index-dry-run pipeline qa validate-mod1 app streamlit clean clean-data
 
 help:
 	$(info Comandos disponibles:)
@@ -37,6 +40,8 @@ help:
 	$(info   make pdf             - Extraer PDFs con Docling)
 	$(info   make pdf-fast        - Extraer PDFs con PyMuPDF)
 	$(info   make chunk           - Generar base de conocimiento segmentada)
+	$(info   make rag-index       - Construir indice RAG vectorial en Chroma)
+	$(info   make rag-index-dry-run - Validar chunks sin llamar a OpenAI)
 	$(info   make pipeline        - Ejecutar scraping, PDF y chunking)
 	$(info   make qa              - Iniciar sistema Q&A interactivo)
 	$(info   make validate-mod1   - Validar base Q&A del Modulo 1)
@@ -83,6 +88,12 @@ pdf-fast:
 
 chunk:
 	$(UV) run carnicos-chunk --input-dir "$(DATASET_DIR)" --output "$(CHUNKS_FILE)" --max-chars $(MAX_CHARS)
+
+rag-index:
+	$(UV) run carnicos-build-rag --chunks-path "$(CHUNKS_FILE)" --embedding-model "$(EMBEDDING_MODEL)" --chroma-dir "$(CHROMA_DIR)" --chroma-collection "$(CHROMA_COLLECTION)"
+
+rag-index-dry-run:
+	$(UV) run carnicos-build-rag --chunks-path "$(CHUNKS_FILE)" --embedding-model "$(EMBEDDING_MODEL)" --dry-run
 
 pipeline: scrape pdf chunk
 
