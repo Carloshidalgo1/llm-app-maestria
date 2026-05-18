@@ -4,6 +4,13 @@
 **Modulo:** 2 — Agente conversacional  
 **Rama:** `modulo-2-agente-conversacional`
 
+**Integrantes:**
+
+- Carlos Alex Macias Perdomo — codigo: 22500208
+- Carlos Hidalgo Escobar — codigo: 22502395
+- Lorena Portilla — codigo: 22500248
+- Luis Carlos Correa — codigo: 22501541
+
 ---
 
 ## Resumen

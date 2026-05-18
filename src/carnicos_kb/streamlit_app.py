@@ -289,7 +289,7 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
             qa_response = qa_system.answer_with_trace(
                 question,
                 chat_history=chat_history,
-                remember=False,
+                remember=True,
             )
             answer = qa_response.answer
         st.markdown(answer)

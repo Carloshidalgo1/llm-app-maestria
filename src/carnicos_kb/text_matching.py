@@ -40,8 +40,7 @@ def normalize_for_search(text: str) -> str:
     """Convierte texto libre en una forma estable para comparar palabras.
 
     La normalizacion elimina tildes, pasa a minusculas y reemplaza signos por
-    espacios. Es deliberadamente simple para que la recuperacion sea explicable
-    durante la sustentacion.
+    espacios.
     """
     without_accents = unicodedata.normalize("NFKD", text)
     ascii_text = without_accents.encode("ascii", "ignore").decode("ascii")
