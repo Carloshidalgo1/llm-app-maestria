@@ -1,13 +1,12 @@
-import sys
-import types
 from pathlib import Path
+
+from langchain_core.documents import Document
 
 from carnicos_kb.document_retriever_tool import KnowledgeChunk
 from carnicos_kb.rag_index_builder import (
-    build_chroma_metadata,
+    build_pgvector_index,
     format_chunk_for_embedding,
     load_chunks_from_markdown,
-    save_chroma_index,
 )
 
 
@@ -57,69 +56,53 @@ def test_format_chunk_for_embedding_includes_metadata() -> None:
     assert "Texto del chunk." in prepared_text
 
 
-def test_build_chroma_metadata_keeps_traceable_fields(tmp_path: Path) -> None:
-    chunk = KnowledgeChunk(
-        chunk_id="C0001",
-        title="historia.md | Nuestra Historia",
-        source="historia.md",
-        text="Texto A",
-    )
-
-    metadata = build_chroma_metadata([chunk], tmp_path / "chunks.md")
-
-    assert metadata == [
-        {
-            "chunk_id": "C0001",
-            "title": "historia.md | Nuestra Historia",
-            "source": "historia.md",
-            "source_path": str(tmp_path / "chunks.md"),
-        }
-    ]
-
-
-def test_save_chroma_index_adds_texts_with_ids_and_metadata(
+def test_build_pgvector_index_adds_documents_with_expected_settings(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     calls = {}
 
-    class FakeChroma:
-        def __init__(self, collection_name, embedding_function, persist_directory):
+    class FakePGVectorRetriever:
+        def __init__(self, database_url, collection_name, embedding_model):
+            calls["database_url"] = database_url
             calls["collection_name"] = collection_name
-            calls["embedding_function"] = embedding_function
-            calls["persist_directory"] = persist_directory
+            calls["embedding_model"] = embedding_model
 
-        def add_texts(self, texts, metadatas, ids):
-            calls["texts"] = texts
-            calls["metadatas"] = metadatas
-            calls["ids"] = ids
-            return ids
+        def index_documents(self, documents):
+            calls["documents"] = documents
+            return len(documents)
 
-    fake_chroma_module = types.SimpleNamespace(Chroma=FakeChroma)
-    monkeypatch.setitem(sys.modules, "langchain_chroma", fake_chroma_module)
+    documents = [
+        Document(page_content="Historia", metadata={"source": "historia.md"}),
+        Document(page_content="Bienestar", metadata={"source": "bienestar.md"}),
+    ]
     monkeypatch.setattr(
-        "carnicos_kb.rag_index_builder.create_embedding_client",
-        lambda embedding_model: f"embeddings:{embedding_model}",
+        "carnicos_kb.rag_index_builder.require_openai_api_key",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "carnicos_kb.rag_index_builder.build_chunks_with_splitter",
+        lambda input_dir, chunk_size, chunk_overlap: documents,
+    )
+    monkeypatch.setattr(
+        "carnicos_kb.rag_index_builder.PGVectorRetriever",
+        FakePGVectorRetriever,
     )
 
-    chunk = KnowledgeChunk(
-        chunk_id="C0001",
-        title="historia.md | Nuestra Historia",
-        source="historia.md",
-        text="Texto A",
-    )
-    count = save_chroma_index(
-        chunks=[chunk],
-        texts=["Texto preparado"],
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+
+    count = build_pgvector_index(
+        dataset_dir=dataset_dir,
         embedding_model="text-embedding-3-small",
-        persist_directory=tmp_path / "chroma",
         collection_name="test_collection",
-        source_path=tmp_path / "chunks.md",
+        chunk_size=900,
+        chunk_overlap=100,
+        database_url="postgresql://user:pass@localhost:5432/testdb",
     )
 
-    assert count == 1
+    assert count == 2
+    assert calls["database_url"] == "postgresql://user:pass@localhost:5432/testdb"
     assert calls["collection_name"] == "test_collection"
-    assert calls["embedding_function"] == "embeddings:text-embedding-3-small"
-    assert calls["texts"] == ["Texto preparado"]
-    assert calls["ids"] == ["C0001"]
-    assert calls["metadatas"][0]["chunk_id"] == "C0001"
+    assert calls["embedding_model"] == "text-embedding-3-small"
+    assert calls["documents"] == documents

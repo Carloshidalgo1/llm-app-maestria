@@ -5,6 +5,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 from carnicos_kb.paths import DEFAULT_CHUNKS_FILE, DEFAULT_DATASET_DIR
 
 
@@ -254,6 +257,34 @@ def main() -> None:
     print(f"Chunks generados: {len(chunks)}")
     print(f"Caracteres utiles: {total_chars}")
     print(f"Archivo de salida: {args.output}")
+
+
+def build_chunks_with_splitter(
+    input_dir: Path,
+    chunk_size: int = 1500,
+    chunk_overlap: int = 200,
+) -> list[Document]:
+    """Divide archivos Markdown en Document objects usando RecursiveCharacterTextSplitter.
+
+    A diferencia de build_chunks, devuelve objetos Document de LangChain listos
+    para ser indexados en un vector store nativo.
+    """
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    documents: list[Document] = []
+    for md_file in sorted(input_dir.glob("*.md"), key=lambda p: p.name.lower()):
+        text = clean_text(md_file.read_text(encoding="utf-8"))
+        if not text:
+            continue
+        docs = splitter.create_documents(
+            texts=[text],
+            metadatas=[{"source": md_file.as_posix(), "title": md_file.stem}],
+        )
+        documents.extend(docs)
+    return documents
 
 
 if __name__ == "__main__":

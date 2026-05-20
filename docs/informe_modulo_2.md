@@ -71,8 +71,8 @@ Router LangChain — salida estructurada RouteDecision
   |       Recuperacion lexica determinista; sin embeddings
   |
   +---> base_documental_carnicos
-          Fuente: data/vector_index/chroma/
-          Recuperacion vectorial por similitud semantica con Chroma
+          Fuente: PostgreSQL/PGVector o InMemoryVectorStore en desarrollo
+          Recuperacion vectorial por similitud semantica
 
 Resultado de herramienta + historial normalizado
   |
@@ -103,7 +103,7 @@ src/carnicos_kb/rag_index_builder.py
 OpenAIEmbeddings(model="text-embedding-3-small")
   |
   v
-data/vector_index/chroma/   (base vectorial Chroma)
+PostgreSQL/PGVector   (base vectorial persistente)
 ```
 
 ---
@@ -145,13 +145,10 @@ confunda con otras cadenas que contienen subcadenas similares.
 ### 3.3 Herramienta documental
 
 La herramienta `base_documental_carnicos` esta implementada en
-`src/carnicos_kb/chroma_retriever_tool.py`. Carga la coleccion persistida en
-`data/vector_index/chroma/` y ejecuta busquedas por similitud semantica
-mediante `similarity_search` de `langchain-chroma` con
-`OpenAIEmbeddings(model="text-embedding-3-small")`. Devuelve los tres fragmentos
-mas cercanos semanticamente a la consulta. Si el directorio de la coleccion no
-existe, el sistema lanza `FileNotFoundError` con instrucciones para construirlo
-ejecutando `make rag-index`.
+`src/carnicos_kb/vector_retriever_tool.py`. Expone una interfaz comun para
+recuperacion vectorial documental con PGVector en produccion, InMemoryVectorStore
+como fallback de desarrollo.
+Devuelve los tres fragmentos mas cercanos semanticamente a la consulta.
 
 El modulo `src/carnicos_kb/document_retriever_tool.py` conserva las utilidades
 de parseo de chunks (`parse_knowledge_chunks`, `KnowledgeChunk`) que usa el
@@ -179,11 +176,10 @@ inyeccion de prompt a traves de documentos recuperados.
 ### 3.5 Indice RAG vectorial
 
 `src/carnicos_kb/rag_index_builder.py` genera el indice vectorial de forma
-independiente al agente. Lee `base_conocimiento_chunks.md`, invoca
-`OpenAIEmbeddings(model="text-embedding-3-small")` para crear un vector por
-chunk y persiste la coleccion en `data/vector_index/chroma/`. Cada registro
-incluye el texto del chunk enriquecido con su ID, titulo y fuente, mas un
-diccionario de metadatos con `chunk_id`, `title`, `source` y `source_path`.
+independiente al agente. Lee los Markdown procesados desde
+`data/processed/dataset_carnicos`, los divide con `RecursiveCharacterTextSplitter`,
+invoca `OpenAIEmbeddings(model="text-embedding-3-small")` y persiste los
+documentos embebidos en PostgreSQL/PGVector.
 
 El modo `dry-run` valida el parseo y conteo de chunks sin realizar llamadas a
 la API de OpenAI. En la ejecucion validada el corpus produjo 329 chunks.
@@ -220,8 +216,8 @@ La suite cubre ocho modulos de test con un total de 30 casos:
 | `tests/test_structured_data_tool.py` | Recuperacion determinista de datos estructurados |
 | `tests/test_document_retriever_tool.py` | Parseo de chunks Markdown y constante de nombre de herramienta |
 | `tests/test_agent_contract.py` | Contrato publico del agente (`QAResponse`, `answer`, `answer_with_trace`) |
-| `tests/test_rag_index_builder.py` | Construccion del indice Chroma: carga, formato de embedding y metadatos |
-| `tests/test_chroma_retriever_tool.py` | Renderizado de documentos recuperados desde Chroma |
+| `tests/test_rag_index_builder.py` | Construccion del indice PGVector: carga, formato de embedding e indexacion |
+| `tests/test_vector_retriever_tool.py` | Renderizado de documentos recuperados por retrievers vectoriales |
 | `tests/test_conversation_memory.py` | Normalizacion del historial y orden de mensajes |
 | `tests/test_routing_end_to_end.py` | Flujo completo router → herramienta → cadena de respuesta con LLM mockeado (6 escenarios) |
 | `tests/test_chunking.py` | Pipeline de chunking desde archivos Markdown |

@@ -191,7 +191,7 @@ En el modulo 1 no se implementan embeddings ni base de datos vectorial porque el
 Para el modulo 2, la arquitectura recomendada es evolucionar hacia RAG con los siguientes componentes:
 
 - **Modelo de embeddings:** un modelo de embeddings compatible con el proveedor elegido para convertir cada chunk en vectores.
-- **Base vectorial:** Chroma, FAISS u otra base vectorial local o gestionada.
+- **Base vectorial:** PGVector u otra base vectorial gestionada.
 - **Retriever:** busqueda semantica de los chunks mas relevantes para cada pregunta.
 - **LLM:** el mismo proveedor configurado por API, ajustado segun costo, latencia y calidad.
 - **Prompt RAG:** instrucciones de respuesta que incluyan solo los fragmentos recuperados y sus fuentes.

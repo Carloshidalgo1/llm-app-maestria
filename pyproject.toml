@@ -11,10 +11,14 @@ requires-python = ">=3.10"
 dependencies = [
     "beautifulsoup4>=4.12",
     "docling>=2.90",
-    "langchain>=0.1",
-    "langchain-chroma>=0.1",
+    "langchain>=1.2",
     "langchain-openai>=0.1",
+    "langchain-postgres>=0.0.12",
+    "langchain-text-splitters>=0.3",
     "langsmith>=0.1",
+    "langgraph>=1.0",
+    "langgraph-checkpoint-postgres>=2.0",
+    "psycopg[binary]>=3.1",
     "lxml>=5.0",
     "openai>=1.0",
     "pymupdf>=1.24",
@@ -49,6 +53,8 @@ packages = ["src/carnicos_kb"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+tmp_path_retention_policy = "failed"
+addopts = "--basetemp=.pytest_tmp"
 
 [tool.ruff]
 line-length = 100

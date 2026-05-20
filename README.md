@@ -12,10 +12,8 @@ Proyecto Python para construir una base de conocimiento en Markdown sobre **Alim
 │   ├── processed/
 │   │   ├── dataset_carnicos/              # Markdown extraido
 │   │   └── base_conocimiento_chunks.md
-│   ├── structured/
-│   │   └── carnicos_structured_faq.json   # Datos concretos (herramienta estructurada)
-│   └── vector_index/
-│       └── chroma/                        # Base vectorial local Chroma
+│   └── structured/
+│       └── carnicos_structured_faq.json   # Datos concretos (herramienta estructurada)
 ├── docs/
 │   ├── Requisitos.txt
 │   ├── definicion_alcance.md
@@ -28,7 +26,7 @@ Proyecto Python para construir una base de conocimiento en Markdown sobre **Alim
 ├── src/
 │   └── carnicos_kb/
 │       ├── chunking.py                    # Limpieza y chunking semantico
-│       ├── chroma_retriever_tool.py       # Recuperador documental con Chroma
+│       ├── vector_retriever_tool.py       # Recuperador documental vectorial
 │       ├── document_retriever_tool.py     # Utilidades de parseo de chunks Markdown
 │       ├── knowledge_loader.py            # Carga de la base de conocimiento
 │       ├── langsmith_config.py            # Estado de configuracion LangSmith
@@ -115,7 +113,7 @@ Equivalentes directos con `uv`:
 uv run carnicos-scrape --output-dir data/processed/dataset_carnicos
 uv run carnicos-pdf --input-dir data/raw/pdfs --output-dir data/processed/dataset_carnicos
 uv run carnicos-chunk --input-dir data/processed/dataset_carnicos --output data/processed/base_conocimiento_chunks.md
-uv run carnicos-build-rag --chunks-path data/processed/base_conocimiento_chunks.md
+uv run carnicos-build-rag --dataset-dir data/processed/dataset_carnicos
 uv run carnicos-app --server.address localhost --server.port 8501
 uv run --extra dev pytest --basetemp .pytest_tmp
 ```
@@ -126,7 +124,7 @@ uv run --extra dev pytest --basetemp .pytest_tmp
 2. Ejecutar `make scrape` para extraer paginas del sitio web.
 3. Ejecutar `make pdf` para extraer PDFs con Docling, o `make pdf-fast` para extraccion rapida con PyMuPDF.
 4. Ejecutar `make chunk` para generar `data/processed/base_conocimiento_chunks.md`.
-5. Ejecutar `make rag-index` para construir el indice vectorial en Chroma.
+5. Ejecutar `make rag-index` para construir el indice vectorial en PostgreSQL/PGVector.
 6. Ejecutar `make app` para abrir la interfaz Streamlit del asistente Q&A.
 
 ## Variables de entorno
@@ -145,8 +143,10 @@ OPENAI_TEMPERATURE=0.2
 OPENAI_MAX_TOKENS=1500
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 CARNICOS_KNOWLEDGE_PATH=data/processed/base_conocimiento_chunks.md
-CHROMA_PERSIST_DIRECTORY=data/vector_index/chroma
-CHROMA_COLLECTION_NAME=carnicos_rag
+DATABASE_URL=postgresql://user:password@localhost:5432/carnicos_kb
+PG_COLLECTION_NAME=carnicos_rag
+RAG_CHUNK_SIZE=1000
+RAG_CHUNK_OVERLAP=200
 LANGSMITH_TRACING=false
 LANGSMITH_API_KEY=lsv2_pt_tu_api_key_aqui
 LANGSMITH_PROJECT=carnicos-kb-agent
@@ -158,8 +158,8 @@ LANGSMITH_PROJECT=carnicos-kb-agent
 - `carnicos_kb.pdf_extractor`: conversion estructurada de PDFs a Markdown con Docling, por lotes.
 - `carnicos_kb.pdf_text_extractor`: conversion rapida de PDFs a Markdown con PyMuPDF.
 - `carnicos_kb.chunking`: limpieza conservadora y chunking semantico de Markdown.
-- `carnicos_kb.rag_index_builder`: construccion del indice RAG vectorial en Chroma con `text-embedding-3-small`.
-- `carnicos_kb.chroma_retriever_tool`: herramienta LangChain para recuperacion semantica desde Chroma.
+- `carnicos_kb.rag_index_builder`: construccion del indice RAG vectorial en PostgreSQL/PGVector con `text-embedding-3-small`.
+- `carnicos_kb.vector_retriever_tool`: herramientas LangChain para recuperacion semantica con PGVector e InMemoryVectorStore.
 - `carnicos_kb.document_retriever_tool`: utilidades para parsear chunks Markdown (IDs, titulo, fuente, texto).
 - `carnicos_kb.structured_data_tool`: herramienta LangChain para datos concretos en JSON.
 - `carnicos_kb.qa_system`: agente Q&A con memoria, router LangChain y trazas LangSmith.

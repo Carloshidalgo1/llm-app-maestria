@@ -14,4 +14,4 @@ build/
 dist/
 *.egg-info/
 dataset_carnicos_sample/
-data/vector_index/chroma/
+data/checkpoints/

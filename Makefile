@@ -16,8 +16,7 @@ unexport VIRTUAL_ENV
 PDF_DIR ?= data/raw/pdfs
 DATASET_DIR ?= data/processed/dataset_carnicos
 CHUNKS_FILE ?= data/processed/base_conocimiento_chunks.md
-CHROMA_DIR ?= data/vector_index/chroma
-CHROMA_COLLECTION ?= carnicos_rag
+PG_COLLECTION ?= carnicos_rag
 EMBEDDING_MODEL ?= text-embedding-3-small
 MAX_CHARS ?= 3200
 BATCH_SIZE ?= 5
@@ -40,7 +39,7 @@ help:
 	$(info   make pdf             - Extraer PDFs con Docling)
 	$(info   make pdf-fast        - Extraer PDFs con PyMuPDF)
 	$(info   make chunk           - Generar base de conocimiento segmentada)
-	$(info   make rag-index       - Construir indice RAG vectorial en Chroma)
+	$(info   make rag-index       - Construir indice RAG vectorial en PostgreSQL/PGVector)
 	$(info   make rag-index-dry-run - Validar chunks sin llamar a OpenAI)
 	$(info   make pipeline        - Ejecutar scraping, PDF y chunking)
 	$(info   make qa              - Iniciar sistema Q&A interactivo)
@@ -90,10 +89,10 @@ chunk:
 	$(UV) run carnicos-chunk --input-dir "$(DATASET_DIR)" --output "$(CHUNKS_FILE)" --max-chars $(MAX_CHARS)
 
 rag-index:
-	$(UV) run carnicos-build-rag --chunks-path "$(CHUNKS_FILE)" --embedding-model "$(EMBEDDING_MODEL)" --chroma-dir "$(CHROMA_DIR)" --chroma-collection "$(CHROMA_COLLECTION)"
+	$(UV) run carnicos-build-rag --dataset-dir "$(DATASET_DIR)" --embedding-model "$(EMBEDDING_MODEL)" --collection "$(PG_COLLECTION)"
 
 rag-index-dry-run:
-	$(UV) run carnicos-build-rag --chunks-path "$(CHUNKS_FILE)" --embedding-model "$(EMBEDDING_MODEL)" --dry-run
+	$(UV) run carnicos-build-rag --dataset-dir "$(DATASET_DIR)" --embedding-model "$(EMBEDDING_MODEL)" --dry-run
 
 pipeline: scrape pdf chunk
 

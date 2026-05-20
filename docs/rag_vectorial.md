@@ -6,28 +6,27 @@ Este documento acompana el script independiente:
 src/carnicos_kb/rag_index_builder.py
 ```
 
-El objetivo es construir un indice local para RAG vectorial. El agente actual
-puede seguir funcionando con su recuperador documental, pero este script deja
-preparada la capa de embeddings que se espera en un RAG vectorial clasico.
+El objetivo es construir la capa de recuperacion semantica del agente usando
+embeddings de OpenAI y un backend PGVector en PostgreSQL. En desarrollo, el
+codigo tambien puede construir un `InMemoryVectorStore` para validaciones sin
+persistencia.
 
 ## Flujo del script
 
 ```text
-base_conocimiento_chunks.md
+data/processed/dataset_carnicos/
   |
   v
-parsear chunks C0001, C0002, ...
+RecursiveCharacterTextSplitter
   |
   v
-preparar texto: id + titulo + fuente + contenido
+Document(page_content, metadata)
   |
   v
 OpenAIEmbeddings(model="text-embedding-3-small")
   |
   v
-data/vector_index/carnicos_rag_index.json
-o
-data/vector_index/chroma/
+PostgreSQL / PGVector
 ```
 
 ## Por que `text-embedding-3-small`
@@ -36,38 +35,26 @@ data/vector_index/chroma/
 - Es suficiente para busqueda semantica sobre preguntas frecuentes,
   sostenibilidad, productos, marcas y datos corporativos.
 - Tiene menor costo que `text-embedding-3-large`.
-- Permite demostrar RAG vectorial real sin introducir infraestructura externa.
+- Permite demostrar RAG vectorial real con una base persistente.
 
 ## Comandos
 
-Validar que los chunks se leen correctamente, sin llamar a OpenAI:
+Validar lectura y chunking sin llamar a OpenAI ni escribir en PostgreSQL:
 
 ```powershell
 make rag-index-dry-run
 ```
 
-Construir el indice vectorial real:
+Construir el indice vectorial persistente:
 
 ```powershell
 make rag-index
 ```
 
-Construir la base vectorial local en Chroma:
-
-```powershell
-make rag-index-chroma
-```
-
 Comando directo equivalente:
 
 ```powershell
-uv run carnicos-build-rag --chunks-path data/processed/base_conocimiento_chunks.md --output data/vector_index/carnicos_rag_index.json --embedding-model text-embedding-3-small
-```
-
-Comando directo con Chroma:
-
-```powershell
-uv run carnicos-build-rag --chunks-path data/processed/base_conocimiento_chunks.md --embedding-model text-embedding-3-small --vector-store chroma --chroma-dir data/vector_index/chroma --chroma-collection carnicos_rag
+uv run carnicos-build-rag --dataset-dir data/processed/dataset_carnicos --embedding-model text-embedding-3-small --collection carnicos_rag
 ```
 
 ## Variables de entorno
@@ -75,75 +62,35 @@ uv run carnicos-build-rag --chunks-path data/processed/base_conocimiento_chunks.
 ```env
 OPENAI_API_KEY=sk-proj-tu_clave_real
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-CARNICOS_KNOWLEDGE_PATH=data/processed/base_conocimiento_chunks.md
-CARNICOS_RAG_INDEX_PATH=data/vector_index/carnicos_rag_index.json
-RAG_EMBEDDING_BATCH_SIZE=64
-RAG_VECTOR_STORE=json
-CHROMA_PERSIST_DIRECTORY=data/vector_index/chroma
-CHROMA_COLLECTION_NAME=carnicos_rag
-CARNICOS_DOCUMENTAL_RETRIEVER=lexical
+DATABASE_URL=postgresql://user:password@localhost:5432/carnicos_kb
+PG_COLLECTION_NAME=carnicos_rag
+RAG_CHUNK_SIZE=1000
+RAG_CHUNK_OVERLAP=200
 ```
 
-## Archivo generado
+## Backend PGVector
 
-El JSON generado contiene:
+`rag_index_builder.py` crea documentos LangChain desde los Markdown procesados,
+calcula embeddings y los almacena en la coleccion configurada por
+`PG_COLLECTION_NAME` o `--collection`.
 
-- `metadata`: fecha de construccion, modelo, fuente, cantidad de chunks y
-  dimensiones del vector.
-- `records`: lista de chunks con `chunk_id`, titulo, fuente, texto y embedding.
+Cada documento conserva metadatos trazables:
 
-Ejemplo conceptual:
+- `source`: ruta del Markdown origen;
+- `title`: nombre base del archivo fuente.
 
-```json
-{
-  "metadata": {
-    "embedding_model": "text-embedding-3-small",
-    "chunk_count": 329,
-    "embedding_dimensions": 1536
-  },
-  "records": [
-    {
-      "chunk_id": "C0001",
-      "title": "alimentoscarnicos.com.co.md | Nuestra Historia",
-      "source": "data/processed/dataset_carnicos/alimentoscarnicos.com.co.md",
-      "text": "...",
-      "embedding": [0.0123, -0.0456]
-    }
-  ]
-}
-```
-
-## Base Chroma generada
-
-Cuando se usa `--vector-store chroma`, los chunks se guardan en una coleccion
-persistente local:
-
-```text
-data/vector_index/chroma/
-```
-
-Cada documento en Chroma conserva:
-
-- contenido preparado para embedding: id, titulo, fuente y texto del chunk;
-- metadatos: `chunk_id`, `title`, `source` y `source_path`;
-- embedding calculado con `text-embedding-3-small`.
-
-Para que el agente use Chroma como recuperador documental, despues de construir
-la base se puede configurar:
-
-```env
-CARNICOS_DOCUMENTAL_RETRIEVER=chroma
-```
+El agente usa `PGVectorRetriever` cuando `DATABASE_URL` esta configurada. Si no
+hay `DATABASE_URL`, usa `InMemoryVectorStore` como fallback de desarrollo.
 
 ## Como sustentarlo
 
 Explicacion corta:
 
-> Primero convertimos cada chunk documental en un vector numerico usando
-> `text-embedding-3-small`. Luego guardamos esos vectores con su texto y fuente.
-> En una consulta RAG vectorial, la pregunta tambien se convierte en vector y se
-> comparan similitudes para recuperar los chunks mas cercanos antes de llamar al
-> LLM.
+> Primero dividimos cada documento Markdown en fragmentos con
+> `RecursiveCharacterTextSplitter`. Luego convertimos esos fragmentos en
+> vectores usando `text-embedding-3-small` y los guardamos en PGVector. En una
+> consulta RAG, la pregunta tambien se convierte en vector y se comparan
+> similitudes para recuperar los fragmentos mas cercanos antes de llamar al LLM.
 
-Importante: la herramienta de datos estructurados no debe usar embeddings. Datos
-como NIT, telefonos y sedes se recuperan de forma determinista desde JSON.
+Importante: la herramienta de datos estructurados no usa embeddings. Datos como
+NIT, telefonos y sedes se recuperan de forma deterministica desde JSON.

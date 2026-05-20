@@ -1,6 +1,7 @@
 """Interfaz web Streamlit para el sistema Q&A de Alimentos Carnicos."""
 
 import os
+import uuid
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -12,10 +13,9 @@ from dotenv import load_dotenv
 from carnicos_kb.knowledge_loader import get_knowledge_stats
 from carnicos_kb.langsmith_config import get_langsmith_status
 from carnicos_kb.paths import (
-    DEFAULT_CHROMA_COLLECTION,
-    DEFAULT_CHROMA_DIR,
     DEFAULT_CHUNKS_FILE,
     DEFAULT_DATASET_DIR,
+    DEFAULT_PG_COLLECTION,
 )
 from carnicos_kb.qa_system import (
     DEFAULT_MAX_TOKENS,
@@ -153,11 +153,13 @@ def render_sidebar() -> Dict[str, object]:
 
     if st.sidebar.button("Limpiar conversacion", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.thread_id = str(uuid.uuid4())
         st.rerun()
 
     if st.sidebar.button("Recargar asistente", use_container_width=True):
         get_qa_system.clear()
         st.session_state.messages = []
+        st.session_state.thread_id = str(uuid.uuid4())
         st.rerun()
 
     return {
@@ -171,41 +173,46 @@ def render_sidebar() -> Dict[str, object]:
 
 
 def render_documental_retriever_status() -> Dict[str, object]:
-    """Muestra si la base documental usa busqueda lexica o Chroma."""
-    backend = os.getenv("CARNICOS_DOCUMENTAL_RETRIEVER", "lexical").strip().lower()
-    if backend not in {"chroma", "lexical", "texto", "documental"}:
-        st.sidebar.warning(
-            "`CARNICOS_DOCUMENTAL_RETRIEVER` no reconocido; se usara `lexical`."
-        )
-        backend = "lexical"
+    """Muestra el estado del vector store RAG (PGVector o InMemoryVectorStore)."""
+    database_url = os.getenv("DATABASE_URL", "").strip()
 
-    if backend == "chroma":
-        chroma_dir = resolve_project_path(
-            Path(os.getenv("CHROMA_PERSIST_DIRECTORY", DEFAULT_CHROMA_DIR))
-        )
-        chroma_collection = os.getenv("CHROMA_COLLECTION_NAME", DEFAULT_CHROMA_COLLECTION)
-        if chroma_dir.exists():
-            st.sidebar.success(
-                f"Recuperador documental: Chroma (`{chroma_collection}`)"
-            )
-            st.sidebar.caption(f"Chroma: `{format_path(chroma_dir)}`")
+    if database_url:
+        pg_collection = os.getenv("PG_COLLECTION_NAME", DEFAULT_PG_COLLECTION)
+        pg_available = _check_postgres_available(database_url)
+        if pg_available:
+            st.sidebar.success(f"RAG: PGVector (`{pg_collection}`)")
+            st.sidebar.caption("Vector store: PostgreSQL persistente")
         else:
             st.sidebar.warning(
-                "Recuperador documental: Chroma configurado, pero falta construir el indice."
+                f"RAG: PGVector configurado (`{pg_collection}`), pero PostgreSQL no responde."
             )
-            st.sidebar.caption(f"Ruta esperada: `{format_path(chroma_dir)}`")
+            st.sidebar.caption("Verifica que Docker este ejecutandose: `docker start carnicos-pg`")
         return {
-            "backend": "chroma",
-            "chroma_dir": chroma_dir,
-            "chroma_collection": chroma_collection,
+            "backend": "pgvector",
+            "database_url": database_url,
+            "pg_collection": pg_collection,
+            "pg_available": pg_available,
         }
 
-    st.sidebar.info("Recuperador documental: busqueda lexica")
+    st.sidebar.info("RAG: InMemoryVectorStore (sin persistencia)")
+    st.sidebar.caption("Configura DATABASE_URL en .env para usar PGVector persistente.")
     return {
-        "backend": "lexical",
-        "chroma_dir": None,
-        "chroma_collection": None,
+        "backend": "memory",
+        "database_url": None,
+        "pg_collection": None,
+        "pg_available": False,
     }
+
+
+def _check_postgres_available(database_url: str) -> bool:
+    """Verifica conectividad basica a PostgreSQL (timeout 2 s)."""
+    try:
+        import psycopg  # type: ignore[import-untyped]
+        conn = psycopg.connect(database_url, connect_timeout=2)
+        conn.close()
+        return True
+    except Exception:
+        return False
 
 
 def render_assistant(config: Dict[str, object]) -> None:
@@ -261,16 +268,14 @@ def render_examples() -> None:
 def render_chat(qa_system: CarnicosQASystem) -> None:
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "thread_id" not in st.session_state:
+        st.session_state.thread_id = str(uuid.uuid4())
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            if message["role"] == "assistant" and message.get("tool_name"):
-                render_agent_trace(
-                    tool_name=str(message.get("tool_name", "")),
-                    tool_reason=str(message.get("tool_reason", "")),
-                    tool_output=str(message.get("tool_output", "")),
-                )
+            if message["role"] == "assistant" and message.get("tool_output"):
+                render_agent_trace(tool_output=str(message.get("tool_output", "")))
 
     typed_question = st.chat_input("Escribe una pregunta sobre Alimentos Carnicos...")
     pending_question = st.session_state.pop("pending_question", None)
@@ -279,7 +284,6 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
     if not question:
         return
 
-    chat_history = list(st.session_state.messages)
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
@@ -288,39 +292,29 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
         with st.spinner("Consultando la base de conocimiento y el modelo..."):
             qa_response = qa_system.answer_with_trace(
                 question,
-                chat_history=chat_history,
-                remember=True,
+                thread_id=st.session_state.thread_id,
             )
             answer = qa_response.answer
         st.markdown(answer)
-        render_agent_trace(
-            tool_name=qa_response.tool_name,
-            tool_reason=qa_response.tool_reason,
-            tool_output=qa_response.tool_output,
-        )
+        if qa_response.tool_output:
+            render_agent_trace(tool_output=qa_response.tool_output)
 
     st.session_state.messages.append(
         {
             "role": "assistant",
             "content": answer,
-            "tool_name": qa_response.tool_name,
-            "tool_reason": qa_response.tool_reason,
             "tool_output": qa_response.tool_output,
         }
     )
 
 
-def render_agent_trace(tool_name: str, tool_reason: str, tool_output: str) -> None:
-    """Muestra la decision del router sin exponer cadena de pensamiento privada."""
-    with st.expander("Ruta del agente", expanded=False):
-        st.write(f"**Herramienta:** `{tool_name}`")
-        if tool_reason:
-            st.write(f"**Motivo:** {tool_reason}")
-        if tool_output:
-            preview = tool_output[:2500]
-            st.code(preview, language="markdown")
-            if len(tool_output) > len(preview):
-                st.caption("Salida de herramienta truncada en la interfaz.")
+def render_agent_trace(tool_output: str) -> None:
+    """Muestra los fragmentos documentales recuperados por el agente RAG."""
+    with st.expander("Fragmentos recuperados (RAG)", expanded=False):
+        preview = tool_output[:2500]
+        st.code(preview, language="markdown")
+        if len(tool_output) > len(preview):
+            st.caption("Salida de herramienta truncada en la interfaz.")
 
 
 def render_scope() -> None:
@@ -359,11 +353,13 @@ def render_quick_guide() -> None:
     st.subheader("Guia rapida de uso")
     st.markdown(
         """
-        1. Configura `.env` con `OPENAI_API_KEY`.
+        1. Configura `.env` con `OPENAI_API_KEY` y `DATABASE_URL`.
         2. Instala dependencias con `make sync`.
-        3. Verifica o regenera la base con `make chunk`.
-        4. Ejecuta la interfaz con `make app`.
-        5. Formula preguntas dentro del alcance documentado.
+        3. Levanta PostgreSQL con Docker: `docker start carnicos-pg`
+           (primera vez: `docker run --name carnicos-pg -e POSTGRES_USER=carnicos -e POSTGRES_PASSWORD=carnicos123 -e POSTGRES_DB=carnicos_kb -p 5432:5432 -d pgvector/pgvector:pg16`).
+        4. Construye el indice RAG en PostgreSQL: `carnicos-build-rag`.
+        5. Ejecuta la interfaz con `make app`.
+        6. Formula preguntas dentro del alcance documentado.
         """
     )
 

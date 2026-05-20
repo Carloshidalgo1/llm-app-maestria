@@ -1,17 +1,17 @@
-"""Pruebas de enrutamiento end-to-end con LLM mockeado.
+"""Pruebas de flujo end-to-end del agente ReAct con LLM mockeado.
 
-Estas pruebas verifican que el flujo completo del agente funciona:
-router -> herramienta real -> cadena de respuesta, sin llamar a OpenAI.
+Verifica que el agente unico RAG recibe las preguntas correctamente, que
+la trazabilidad funciona, y que QAResponse refleja el resultado real del
+agente LangChain.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from carnicos_kb.document_retriever_tool import DOCUMENTAL_KNOWLEDGE_TOOL_NAME
-from carnicos_kb.qa_system import CarnicosQASystem, RouteDecision
-from carnicos_kb.structured_data_tool import STRUCTURED_DATA_TOOL_NAME
+from carnicos_kb.qa_system import CarnicosQASystem, QAResponse
 
 
 SAMPLE_KNOWLEDGE = """\
@@ -22,7 +22,7 @@ SAMPLE_KNOWLEDGE = """\
 **Fuente:** `data/processed/dataset_carnicos/historia.md`
 
 Alimentos Carnicos fue fundada en 1935 en Colombia. Forma parte del Grupo
-Nutresa y produce marcas reconocidas como Zenú, Rica y Cunit.
+Nutresa y produce marcas reconocidas como Zenu, Rica y Cunit.
 
 ---
 
@@ -31,253 +31,179 @@ Nutresa y produce marcas reconocidas como Zenú, Rica y Cunit.
 **Fuente:** `data/processed/dataset_carnicos/bienestar-animal.md`
 
 El primer compromiso de la empresa es la meta 2027 sobre cerdas en gestacion
-libres de jaulas. También trabaja en abastecimiento responsable.
+libres de jaulas. Tambien trabaja en abastecimiento responsable.
 """
+
+
+def _make_agent_result(answer: str, tool_content: str = "") -> dict:
+    messages: list = [HumanMessage(content="pregunta")]
+    if tool_content:
+        messages.append(ToolMessage(content=tool_content, tool_call_id="call_1"))
+    messages.append(AIMessage(content=answer))
+    return {"messages": messages}
 
 
 @pytest.fixture()
 def qa_system() -> CarnicosQASystem:
-    """Crea un CarnicosQASystem con LLM y recuperador Chroma mockeados."""
-    from carnicos_kb.document_retriever_tool import (
-        DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
-        parse_knowledge_chunks,
-    )
-    from carnicos_kb.structured_data_tool import build_structured_data_tool
-    from langchain_core.tools import StructuredTool
-
-    _chunks = parse_knowledge_chunks(SAMPLE_KNOWLEDGE)
-
-    def _fake_documental_search(query: str) -> str:
-        q = query.lower()
-        matched = [
-            c for c in _chunks
-            if any(t in c.text.lower() or t in c.title.lower() for t in q.split() if len(t) > 3)
-        ]
-        return "\n\n".join(c.render() for c in (matched or _chunks)[:3])
-
-    fake_documental_tool = StructuredTool.from_function(
-        name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
-        func=_fake_documental_search,
-        description="Stub documental para pruebas unitarias.",
-    )
+    """CarnicosQASystem con init_chat_model, herramienta RAG y agente completamente mockeados."""
+    fake_tool = MagicMock()
+    fake_tool.name = DOCUMENTAL_KNOWLEDGE_TOOL_NAME
+    fake_retriever = MagicMock()
+    fake_agent = MagicMock()
 
     with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-fake-key-for-unit-tests"}):
-        with patch("carnicos_kb.qa_system.ChatOpenAI"):
-            with patch.object(
-                CarnicosQASystem, "_build_documental_tool", return_value=fake_documental_tool
-            ):
-                system = CarnicosQASystem(
-                    knowledge_dir=None,
-                    model="gpt-test",
-                    temperature=0.0,
-                    max_tokens=500,
-                    verbose=False,
-                )
-
-    system.knowledge_base = SAMPLE_KNOWLEDGE
-    system.documental_tool = fake_documental_tool
-    system.structured_tool = build_structured_data_tool()
-    system.tools_by_name = {
-        system.documental_tool.name: system.documental_tool,
-        system.structured_tool.name: system.structured_tool,
-    }
+        with patch("carnicos_kb.qa_system.init_chat_model"):
+            with patch("carnicos_kb.qa_system.load_knowledge_base", return_value=SAMPLE_KNOWLEDGE):
+                with patch(
+                    "carnicos_kb.qa_system.get_knowledge_stats",
+                    return_value={"total_characters": 200, "total_words": 40, "total_paragraphs": 4},
+                ):
+                    with patch.object(CarnicosQASystem, "_build_documents", return_value=[]):
+                        with patch.object(
+                            CarnicosQASystem,
+                            "_build_rag_tool",
+                            return_value=(fake_tool, fake_retriever),
+                        ):
+                            with patch.object(
+                                CarnicosQASystem, "_build_hitl_middleware", return_value=MagicMock()
+                            ):
+                                with patch("carnicos_kb.qa_system.build_dynamic_rag_prompt", return_value=MagicMock()):
+                                    with patch.object(
+                                        CarnicosQASystem, "_build_agent", return_value=fake_agent
+                                    ):
+                                        system = CarnicosQASystem(
+                                            model="openai:gpt-test",
+                                            temperature=0.0,
+                                            max_tokens=500,
+                                            verbose=False,
+                                        )
     return system
 
 
-def _mock_route(qa_system: CarnicosQASystem, tool_name: str, reason: str) -> None:
-    """Configura el router para devolver una ruta fija."""
-    qa_system.router_chain = MagicMock()
-    qa_system.router_chain.invoke.return_value = RouteDecision(
-        tool_name=tool_name,
-        reason=reason,
-    )
-
-
-def _mock_answer(qa_system: CarnicosQASystem, answer_text: str) -> None:
-    """Configura la cadena de respuesta para devolver un texto fijo."""
-    qa_system.answer_chain = MagicMock()
-    qa_system.answer_chain.invoke.return_value = answer_text
-
-
 # -----------------------------------------------------------------------
-# Prueba de enrutamiento: pregunta estructurada
+# Flujo basico
 # -----------------------------------------------------------------------
 
 
-def test_structured_question_routes_to_structured_tool(
-    qa_system: CarnicosQASystem,
-) -> None:
-    """El agente debe usar datos_estructurados_carnicos para telefonos."""
-    _mock_route(
-        qa_system,
-        tool_name=STRUCTURED_DATA_TOOL_NAME,
-        reason="La pregunta solicita un telefono concreto.",
+def test_agent_is_invoked_with_user_question(qa_system: CarnicosQASystem) -> None:
+    """El agente debe recibir la pregunta del usuario como HumanMessage."""
+    qa_system._agent.invoke.return_value = _make_agent_result("Historia documentada.")
+
+    qa_system.answer_with_trace("Cuando fue fundada la empresa?", thread_id="t1")
+
+    call_args = qa_system._agent.invoke.call_args
+    input_messages = call_args[0][0]["messages"]
+    assert len(input_messages) == 1
+    assert isinstance(input_messages[0], HumanMessage)
+    assert "fundada" in input_messages[0].content
+
+
+def test_response_answer_comes_from_last_ai_message(qa_system: CarnicosQASystem) -> None:
+    """El answer de QAResponse debe ser el contenido del ultimo AIMessage."""
+    qa_system._agent.invoke.return_value = _make_agent_result(
+        "Fue fundada en 1935.", "## C0001\nContenido."
     )
-    _mock_answer(qa_system, "El telefono nacional es 01 8000 519 368.")
+
+    response = qa_system.answer_with_trace("Cuando fue fundada?", thread_id="t1")
+
+    assert response.answer == "Fue fundada en 1935."
+
+
+def test_tool_output_contains_retrieved_fragments(qa_system: CarnicosQASystem) -> None:
+    """Los fragmentos recuperados deben aparecer en tool_output de QAResponse."""
+    tool_content = "## C0002 | bienestar-animal.md\nMeta 2027 sobre cerdas libres de jaulas."
+    qa_system._agent.invoke.return_value = _make_agent_result(
+        "El compromiso principal es la meta 2027.", tool_content
+    )
 
     response = qa_system.answer_with_trace(
-        "Cual es el telefono de servicio al cliente?"
+        "Que compromisos existen sobre bienestar animal?", thread_id="t1"
     )
 
-    assert response.tool_name == STRUCTURED_DATA_TOOL_NAME
-    assert "01 8000 519 368" in response.tool_output
-    assert response.answer == "El telefono nacional es 01 8000 519 368."
+    assert "C0002" in response.tool_output
+    assert "meta 2027" in response.tool_output.lower()
 
 
-# -----------------------------------------------------------------------
-# Prueba de enrutamiento: pregunta documental
-# -----------------------------------------------------------------------
+def test_response_tool_name_is_rag_tool(qa_system: CarnicosQASystem) -> None:
+    """El tool_name de QAResponse debe reflejar la herramienta RAG configurada."""
+    qa_system._agent.invoke.return_value = _make_agent_result("Respuesta.")
 
-
-def test_documental_question_routes_to_documental_tool(
-    qa_system: CarnicosQASystem,
-) -> None:
-    """El agente debe usar base_documental_carnicos para preguntas abiertas."""
-    _mock_route(
-        qa_system,
-        tool_name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
-        reason="La pregunta requiere contexto documental.",
-    )
-    _mock_answer(qa_system, "El primer compromiso es la meta 2027 sobre cerdas.")
-
-    response = qa_system.answer_with_trace(
-        "Que compromisos existen sobre bienestar animal?"
-    )
+    response = qa_system.answer_with_trace("Pregunta", thread_id="t1")
 
     assert response.tool_name == DOCUMENTAL_KNOWLEDGE_TOOL_NAME
-    assert "bienestar animal" in response.tool_output.lower()
-    assert "C0002" in response.tool_output
 
 
 # -----------------------------------------------------------------------
-# Prueba de enrutamiento: conversacion mixta
+# Flujo de contactos/datos concretos (antes ruta estructurada)
 # -----------------------------------------------------------------------
 
 
-def test_mixed_conversation_routes_correctly_per_turn(
-    qa_system: CarnicosQASystem,
-) -> None:
-    """En una conversacion mixta, cada turno usa la herramienta correcta."""
-    # Turno 1: pregunta documental
-    _mock_route(
-        qa_system,
-        tool_name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
-        reason="Pregunta abierta sobre historia.",
+def test_phone_query_goes_through_rag_tool(qa_system: CarnicosQASystem) -> None:
+    """Las preguntas sobre telefonos usan la herramienta RAG unica."""
+    tool_content = (
+        "## C0300 | contacto.md | Contacto\n"
+        "Telefono Rica: 01 8000 527 300\n"
+        "Telefono Cunit: 01 8000 526 782"
     )
-    _mock_answer(qa_system, "Fue fundada en 1935 en Colombia.")
-
-    response_1 = qa_system.answer_with_trace(
-        "Cuando fue fundada la empresa?",
-        remember=True,
+    qa_system._agent.invoke.return_value = _make_agent_result(
+        "El telefono de Rica es 01 8000 527 300.", tool_content
     )
 
-    assert response_1.tool_name == DOCUMENTAL_KNOWLEDGE_TOOL_NAME
-
-    # Turno 2: pregunta estructurada
-    _mock_route(
-        qa_system,
-        tool_name=STRUCTURED_DATA_TOOL_NAME,
-        reason="Dato concreto sobre NIT.",
-    )
-    _mock_answer(qa_system, "El NIT es 890.304.130 - 4.")
-
-    response_2 = qa_system.answer_with_trace(
-        "Cual es el NIT de la empresa?",
-        remember=True,
+    response = qa_system.answer_with_trace(
+        "Cual es el telefono de servicio al cliente?", thread_id="t1"
     )
 
-    assert response_2.tool_name == STRUCTURED_DATA_TOOL_NAME
-    assert "890.304.130 - 4" in response_2.tool_output
-
-    # Turno 3: vuelve a documental
-    _mock_route(
-        qa_system,
-        tool_name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
-        reason="Pregunta abierta sobre bienestar.",
-    )
-    _mock_answer(qa_system, "Meta 2027 sobre cerdas libres de jaulas.")
-
-    response_3 = qa_system.answer_with_trace(
-        "Que dice la empresa sobre bienestar animal?",
-        remember=True,
-    )
-
-    assert response_3.tool_name == DOCUMENTAL_KNOWLEDGE_TOOL_NAME
-    assert "bienestar" in response_3.tool_output.lower()
+    assert "01 8000 527 300" in response.tool_output
+    assert "01 8000 527 300" in response.answer
 
 
 # -----------------------------------------------------------------------
-# Prueba de memoria: historial se preserva entre turnos
+# Thread_id y aislamiento de sesiones
 # -----------------------------------------------------------------------
 
 
-def test_memory_accumulates_across_turns(qa_system: CarnicosQASystem) -> None:
-    """La memoria interna conserva los turnos anteriores."""
-    _mock_route(
-        qa_system,
-        tool_name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
-        reason="Contexto documental.",
-    )
-    _mock_answer(qa_system, "Respuesta del turno 1.")
+def test_thread_id_is_passed_in_checkpointer_config(qa_system: CarnicosQASystem) -> None:
+    """El thread_id debe incluirse en el config del checkpointer."""
+    qa_system._agent.invoke.return_value = _make_agent_result("Respuesta.")
 
-    qa_system.answer_with_trace("Primera pregunta", remember=True)
-    assert len(qa_system.get_memory_messages()) == 2  # user + assistant
+    qa_system.answer_with_trace("Pregunta", thread_id="sesion-abc")
 
-    _mock_answer(qa_system, "Respuesta del turno 2.")
-    qa_system.answer_with_trace("Segunda pregunta", remember=True)
-    assert len(qa_system.get_memory_messages()) == 4  # 2 turnos completos
+    call_args = qa_system._agent.invoke.call_args
+    config = call_args[1].get("config") or call_args[0][1]
+    assert config["configurable"]["thread_id"] == "sesion-abc"
 
 
-# -----------------------------------------------------------------------
-# Prueba de memoria: historial externo se pasa al router
-# -----------------------------------------------------------------------
+def test_multiple_turns_use_same_thread_id(qa_system: CarnicosQASystem) -> None:
+    """Turnos consecutivos de la misma sesion comparten thread_id."""
+    qa_system._agent.invoke.return_value = _make_agent_result("Respuesta.")
 
+    qa_system.answer_with_trace("Primera pregunta", thread_id="hilo-1")
+    qa_system.answer_with_trace("Segunda pregunta", thread_id="hilo-1")
 
-def test_external_chat_history_reaches_router(qa_system: CarnicosQASystem) -> None:
-    """El historial de Streamlit llega al router como mensajes normalizados."""
-    _mock_route(
-        qa_system,
-        tool_name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
-        reason="Pregunta de seguimiento.",
-    )
-    _mock_answer(qa_system, "El primero fue la meta 2027.")
-
-    external_history = [
-        {"role": "user", "content": "Que compromisos de bienestar animal existen?"},
-        {"role": "assistant", "content": "Hay varios compromisos documentados."},
+    configs = [
+        (c[1].get("config") or c[0][1])
+        for c in qa_system._agent.invoke.call_args_list
     ]
-
-    qa_system.answer_with_trace(
-        "Cual fue el primero que mencionaste?",
-        chat_history=external_history,
-    )
-
-    call_kwargs = qa_system.router_chain.invoke.call_args
-    passed_history = call_kwargs[0][0]["chat_history"]
-    assert len(passed_history) == 2
-    assert isinstance(passed_history[0], HumanMessage)
-    assert isinstance(passed_history[1], AIMessage)
+    assert all(c["configurable"]["thread_id"] == "hilo-1" for c in configs)
 
 
 # -----------------------------------------------------------------------
-# Prueba de enrutamiento: herramienta real produce salida usable
+# Manejo de errores
 # -----------------------------------------------------------------------
 
 
-def test_real_structured_tool_output_feeds_answer_chain(
-    qa_system: CarnicosQASystem,
-) -> None:
-    """La salida real de la herramienta estructurada se pasa a la cadena final."""
-    _mock_route(
-        qa_system,
-        tool_name=STRUCTURED_DATA_TOOL_NAME,
-        reason="Dato concreto sobre sedes.",
-    )
-    _mock_answer(qa_system, "Las sedes incluyen Barranquilla, Bogota y Cali.")
+def test_empty_question_returns_validation_response(qa_system: CarnicosQASystem) -> None:
+    response = qa_system.answer_with_trace("   ", thread_id="t1")
 
-    qa_system.answer_with_trace("Listar las sedes comerciales")
+    qa_system._agent.invoke.assert_not_called()
+    assert "pregunta valida" in response.answer.lower()
 
-    call_kwargs = qa_system.answer_chain.invoke.call_args[0][0]
-    assert call_kwargs["tool_name"] == STRUCTURED_DATA_TOOL_NAME
-    assert "Barranquilla" in call_kwargs["tool_output"]
-    assert "Cali" in call_kwargs["tool_output"]
+
+def test_agent_exception_does_not_propagate(qa_system: CarnicosQASystem) -> None:
+    qa_system._agent.invoke.side_effect = Exception("Error simulado.")
+
+    response = qa_system.answer_with_trace("Pregunta", thread_id="t1")
+
+    assert isinstance(response, QAResponse)
+    assert response.tool_name == "error"
+    assert "error" in response.answer.lower()

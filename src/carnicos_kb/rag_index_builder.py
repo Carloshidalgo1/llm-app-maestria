@@ -1,12 +1,12 @@
-"""Construccion del indice RAG vectorial en Chroma con OpenAI embeddings.
+"""Construccion del indice RAG vectorial con OpenAI embeddings.
 
-Comando:
+Backend por defecto: PGVector (PostgreSQL). Requiere DATABASE_URL en .env.
+Fallback: InMemoryVectorStore (solo validacion, sin persistencia).
 
-    uv run carnicos-build-rag
+Comandos:
 
-Para revision sin llamar a OpenAI:
-
-    uv run carnicos-build-rag --dry-run
+    carnicos-build-rag                   # indexa en PostgreSQL (DATABASE_URL)
+    carnicos-build-rag --dry-run         # valida sin llamar a OpenAI
 """
 
 from __future__ import annotations
@@ -16,13 +16,16 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langchain_core.documents import Document
+from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_openai import OpenAIEmbeddings
 
+from .vector_retriever_tool import PGVectorRetriever
+from .chunking import build_chunks_with_splitter
 from .document_retriever_tool import KnowledgeChunk, parse_knowledge_chunks
 from .paths import (
-    DEFAULT_CHROMA_COLLECTION,
-    DEFAULT_CHROMA_DIR,
-    DEFAULT_CHUNKS_FILE,
+    DEFAULT_DATASET_DIR,
+    DEFAULT_PG_COLLECTION,
 )
 
 
@@ -69,7 +72,7 @@ def format_chunk_for_embedding(chunk: KnowledgeChunk) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 2. Proceso central: embeddings y almacenamiento en Chroma
+# 2. Preparacion de embeddings
 # ---------------------------------------------------------------------------
 
 def require_openai_api_key() -> None:
@@ -81,139 +84,112 @@ def require_openai_api_key() -> None:
         )
 
 
-def create_embedding_client(embedding_model: str) -> OpenAIEmbeddings:
-    return OpenAIEmbeddings(model=embedding_model)
+def build_langchain_index(
+    dataset_dir: Path = DEFAULT_DATASET_DIR,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    chunk_size: int = 1500,
+    chunk_overlap: int = 200,
+) -> InMemoryVectorStore:
+    """Construye un indice vectorial nativo LangChain con RecursiveCharacterTextSplitter.
+
+    Usa InMemoryVectorStore de langchain_core como vector store nativo. Llama a
+    build_chunks_with_splitter para dividir los documentos Markdown y los indexa
+    con OpenAIEmbeddings.
+
+    Returns:
+        InMemoryVectorStore listo para consultas via as_retriever().
+    """
+    require_openai_api_key()
+    absolute_dir = resolve_project_path(dataset_dir)
+    if not absolute_dir.exists():
+        raise FileNotFoundError(f"No existe el directorio de dataset: {absolute_dir}")
+
+    documents: list[Document] = build_chunks_with_splitter(
+        input_dir=absolute_dir,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+    if not documents:
+        raise ValueError(f"No se obtuvieron documentos del directorio: {absolute_dir}")
+
+    print(f"Documentos generados con RecursiveCharacterTextSplitter: {len(documents)}")
+    embeddings = OpenAIEmbeddings(model=embedding_model)
+    vector_store = InMemoryVectorStore(embedding=embeddings)
+    vector_store.add_documents(documents)
+    print(f"InMemoryVectorStore construido con {len(documents)} chunks.")
+    return vector_store
 
 
-def build_chroma_metadata(
-    chunks: list[KnowledgeChunk],
-    source_path: Path,
-) -> list[dict[str, str]]:
-    return [
-        {
-            "chunk_id": chunk.chunk_id,
-            "title": chunk.title,
-            "source": chunk.source,
-            "source_path": str(source_path),
-        }
-        for chunk in chunks
-    ]
-
-
-def save_chroma_index(
-    chunks: list[KnowledgeChunk],
-    texts: list[str],
-    embedding_model: str,
-    persist_directory: Path,
-    collection_name: str,
-    source_path: Path,
+def build_pgvector_index(
+    dataset_dir: Path = DEFAULT_DATASET_DIR,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    collection_name: str = DEFAULT_PG_COLLECTION,
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+    database_url: str | None = None,
 ) -> int:
-    """Guarda chunks y embeddings en una coleccion local de Chroma."""
-    if len(chunks) != len(texts):
+    """Indexa documentos en PostgreSQL usando PGVector.
+
+    Divide los documentos Markdown con RecursiveCharacterTextSplitter y los
+    almacena en PostgreSQL con OpenAIEmbeddings. Los embeddings se calculan
+    una sola vez y persisten entre reinicios de la aplicacion.
+
+    Returns:
+        Numero de documentos indexados.
+    """
+    require_openai_api_key()
+
+    db_url = database_url or os.getenv("DATABASE_URL", "").strip()
+    if not db_url:
         raise ValueError(
-            f"La cantidad de chunks no coincide con los textos: "
-            f"{len(chunks)} chunks vs {len(texts)} textos."
+            "DATABASE_URL no esta configurada. Agrega la variable en .env o "
+            "pasa --database-url al comando."
         )
 
-    os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
-    try:
-        from langchain_chroma import Chroma
-    except ImportError as exc:
-        raise RuntimeError(
-            "Chroma no esta instalado. Ejecuta `make sync` o instala "
-            "`langchain-chroma` antes de usar este comando."
-        ) from exc
+    absolute_dir = resolve_project_path(dataset_dir)
+    if not absolute_dir.exists():
+        raise FileNotFoundError(f"No existe el directorio de dataset: {absolute_dir}")
 
-    absolute_persist_directory = resolve_project_path(persist_directory)
-    absolute_persist_directory.mkdir(parents=True, exist_ok=True)
-
-    vector_store = Chroma(
-        collection_name=collection_name,
-        embedding_function=create_embedding_client(embedding_model),
-        persist_directory=str(absolute_persist_directory),
-    )
-    document_ids = vector_store.add_texts(
-        texts=texts,
-        metadatas=build_chroma_metadata(chunks, source_path),
-        ids=[chunk.chunk_id for chunk in chunks],
-    )
-    return len(document_ids)
-
-
-def print_chroma_summary(
-    persist_directory: Path,
-    collection_name: str,
-    chunk_count: int,
-    embedding_model: str,
-) -> None:
-    print()
-    print("Indice Chroma construido")
+    print("\nConstruyendo indice PGVector")
     print("-" * 72)
-    print(f"Directorio: {resolve_project_path(persist_directory)}")
-    print(f"Coleccion: {collection_name}")
+    print(f"Fuente: {absolute_dir}")
     print(f"Modelo embeddings: {embedding_model}")
-    print(f"Chunks indexados: {chunk_count}")
+    print(f"Coleccion PostgreSQL: {collection_name}")
+    print(f"chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
 
-
-# ---------------------------------------------------------------------------
-# 3. Orquestacion
-# ---------------------------------------------------------------------------
-
-def build_rag_index(
-    chunks_path: Path,
-    embedding_model: str,
-    chroma_dir: Path = DEFAULT_CHROMA_DIR,
-    chroma_collection: str = DEFAULT_CHROMA_COLLECTION,
-    dry_run: bool = False,
-) -> int | None:
-    """Construye el indice RAG en Chroma o valida los chunks en modo dry-run."""
-    absolute_chunks_path = resolve_project_path(chunks_path)
-    chunks = load_chunks_from_markdown(absolute_chunks_path)
-    texts = [format_chunk_for_embedding(chunk) for chunk in chunks]
-
-    print("Preparacion del indice RAG")
-    print("-" * 72)
-    print(f"Fuente: {absolute_chunks_path}")
-    print(f"Chunks detectados: {len(chunks)}")
-    print(f"Modelo de embeddings: {embedding_model}")
-
-    if dry_run:
-        first_chunk = chunks[0]
-        print()
-        print("Modo dry-run: no se llamo a OpenAI ni se escribio el indice.")
-        print(f"Primer chunk: {first_chunk.chunk_id} | {first_chunk.title}")
-        return None
-
-    require_openai_api_key()
-    count = save_chroma_index(
-        chunks=chunks,
-        texts=texts,
-        embedding_model=embedding_model,
-        persist_directory=chroma_dir,
-        collection_name=chroma_collection,
-        source_path=absolute_chunks_path,
+    documents: list[Document] = build_chunks_with_splitter(
+        input_dir=absolute_dir,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
     )
-    print_chroma_summary(
-        persist_directory=chroma_dir,
-        collection_name=chroma_collection,
-        chunk_count=count,
+    if not documents:
+        raise ValueError(f"No se obtuvieron documentos del directorio: {absolute_dir}")
+
+    print(f"Chunks generados: {len(documents)}")
+    print("Indexando en PostgreSQL...")
+
+    retriever = PGVectorRetriever(
+        database_url=db_url,
+        collection_name=collection_name,
         embedding_model=embedding_model,
     )
+    count = retriever.index_documents(documents)
+    print(f"Documentos indexados en PGVector: {count}")
     return count
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Construye un indice RAG vectorial en Chroma usando "
-            "text-embedding-3-small y los chunks Markdown del proyecto."
+            "Construye el indice RAG en PostgreSQL (PGVector) usando "
+            "RecursiveCharacterTextSplitter y OpenAI embeddings."
         )
     )
     parser.add_argument(
-        "--chunks-path",
+        "--dataset-dir",
         type=Path,
-        default=Path(os.getenv("CARNICOS_KNOWLEDGE_PATH", DEFAULT_CHUNKS_FILE)),
-        help="Archivo Markdown segmentado que se va a indexar.",
+        default=DEFAULT_DATASET_DIR,
+        help="Carpeta con los archivos Markdown fuente (default: data/processed/dataset_carnicos).",
     )
     parser.add_argument(
         "--embedding-model",
@@ -221,20 +197,31 @@ def parse_args() -> argparse.Namespace:
         help="Modelo de embeddings de OpenAI.",
     )
     parser.add_argument(
-        "--chroma-dir",
-        type=Path,
-        default=Path(os.getenv("CHROMA_PERSIST_DIRECTORY", DEFAULT_CHROMA_DIR)),
-        help="Directorio local donde Chroma persiste la coleccion.",
+        "--collection",
+        default=os.getenv("PG_COLLECTION_NAME", DEFAULT_PG_COLLECTION),
+        help="Nombre de la coleccion PGVector en PostgreSQL.",
     )
     parser.add_argument(
-        "--chroma-collection",
-        default=os.getenv("CHROMA_COLLECTION_NAME", DEFAULT_CHROMA_COLLECTION),
-        help="Nombre de la coleccion Chroma.",
+        "--chunk-size",
+        type=int,
+        default=int(os.getenv("RAG_CHUNK_SIZE", "1000")),
+        help="Tamano maximo de chunk en caracteres (default: 1000).",
+    )
+    parser.add_argument(
+        "--chunk-overlap",
+        type=int,
+        default=int(os.getenv("RAG_CHUNK_OVERLAP", "200")),
+        help="Solapamiento entre chunks en caracteres (default: 200).",
+    )
+    parser.add_argument(
+        "--database-url",
+        default=os.getenv("DATABASE_URL", ""),
+        help="URL de conexion PostgreSQL (default: DATABASE_URL del entorno).",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Valida lectura y parseo sin llamar a OpenAI ni escribir indice.",
+        help="Valida lectura y chunking sin llamar a OpenAI ni escribir en PostgreSQL.",
     )
     return parser.parse_args()
 
@@ -243,12 +230,24 @@ def main() -> None:
     load_dotenv(PROJECT_ROOT / ".env", override=False)
     args = parse_args()
 
-    build_rag_index(
-        chunks_path=args.chunks_path,
+    if args.dry_run:
+        absolute_dir = resolve_project_path(args.dataset_dir)
+        documents = build_chunks_with_splitter(
+            input_dir=absolute_dir,
+            chunk_size=args.chunk_size,
+            chunk_overlap=args.chunk_overlap,
+        )
+        print(f"\nDry-run: {len(documents)} chunks generados desde {absolute_dir}")
+        print("No se llamo a OpenAI ni se escribio en PostgreSQL.")
+        return
+
+    build_pgvector_index(
+        dataset_dir=args.dataset_dir,
         embedding_model=args.embedding_model,
-        chroma_dir=args.chroma_dir,
-        chroma_collection=args.chroma_collection,
-        dry_run=bool(args.dry_run),
+        collection_name=args.collection,
+        chunk_size=args.chunk_size,
+        chunk_overlap=args.chunk_overlap,
+        database_url=args.database_url or None,
     )
 
 
