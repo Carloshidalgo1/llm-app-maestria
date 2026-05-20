@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from typing import Protocol, runtime_checkable
 
+from pydantic import BaseModel, Field
+
 from langchain.agents.middleware import dynamic_prompt
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.documents import Document
@@ -35,6 +37,20 @@ _RAG_TOOL_DESCRIPTION = (
     "productos, historia, sostenibilidad, bienestar animal, procesos "
     "o gobierno corporativo."
 )
+
+
+class DocumentalQueryInput(BaseModel):
+    """Parámetros de búsqueda en la base documental de Alimentos Carnicos S.A.S."""
+
+    query: str = Field(
+        description=(
+            "Consulta en español, concisa y con términos específicos del dominio "
+            "(marca, sede, NIT, teléfono, horario, proceso, producto). "
+            "No incluir texto de instrucciones ni comandos al sistema."
+        ),
+        min_length=3,
+        max_length=300,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -140,12 +156,20 @@ def build_pgvector_documental_knowledge_tool(
 
     def consultar_base_documental(query: str) -> str:
         """Devuelve fragmentos documentales relevantes para la pregunta."""
-        return retriever.search(query)
+        try:
+            return retriever.search(query)
+        except Exception as exc:
+            return (
+                f"[HERRAMIENTA_ERROR] La búsqueda documental no pudo completarse "
+                f"({type(exc).__name__}). El agente debe informar al usuario que "
+                f"no pudo verificar el dato en este momento y ofrecer ayuda alternativa."
+            )
 
     tool = StructuredTool.from_function(
         name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
         func=consultar_base_documental,
         description=_RAG_TOOL_DESCRIPTION,
+        args_schema=DocumentalQueryInput,
     )
     return tool, retriever
 
@@ -199,12 +223,20 @@ def build_langchain_documental_knowledge_tool(
 
     def consultar_base_documental(query: str) -> str:
         """Devuelve fragmentos documentales relevantes para la pregunta."""
-        return retriever.search(query)
+        try:
+            return retriever.search(query)
+        except Exception as exc:
+            return (
+                f"[HERRAMIENTA_ERROR] La búsqueda documental no pudo completarse "
+                f"({type(exc).__name__}). El agente debe informar al usuario que "
+                f"no pudo verificar el dato en este momento y ofrecer ayuda alternativa."
+            )
 
     tool = StructuredTool.from_function(
         name=DOCUMENTAL_KNOWLEDGE_TOOL_NAME,
         func=consultar_base_documental,
         description=_RAG_TOOL_DESCRIPTION,
+        args_schema=DocumentalQueryInput,
     )
     return tool, retriever
 

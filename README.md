@@ -159,10 +159,10 @@ LANGSMITH_PROJECT=carnicos-kb-agent
 - `carnicos_kb.pdf_text_extractor`: conversion rapida de PDFs a Markdown con PyMuPDF.
 - `carnicos_kb.chunking`: limpieza conservadora y chunking semantico de Markdown.
 - `carnicos_kb.rag_index_builder`: construccion del indice RAG vectorial en PostgreSQL/PGVector con `text-embedding-3-small`.
-- `carnicos_kb.vector_retriever_tool`: herramientas LangChain para recuperacion semantica con PGVector e InMemoryVectorStore.
+- `carnicos_kb.vector_retriever_tool`: herramientas LangChain para recuperacion semantica con PGVector e InMemoryVectorStore. Incluye `DocumentalQueryInput` (schema Pydantic con `args_schema` para validar entradas del LLM) y manejo de errores resiliente en `consultar_base_documental` (fallos de red o embeddings devuelven un mensaje guia en lugar de propagar la excepcion).
 - `carnicos_kb.document_retriever_tool`: utilidades para parsear chunks Markdown (IDs, titulo, fuente, texto).
 - `carnicos_kb.structured_data_tool`: herramienta LangChain para datos concretos en JSON.
-- `carnicos_kb.qa_system`: agente Q&A con memoria, router LangChain y trazas LangSmith.
+- `carnicos_kb.qa_system`: agente Q&A con memoria, router LangChain y trazas LangSmith. El agente emite respuestas validadas via `AgentResponseSchema` (`answer`, `tool_was_called`, `confidence`); `QAResponse` expone el campo `confidence` para indicar el nivel de evidencia documental de cada respuesta.
 - `carnicos_kb.streamlit_app`: interfaz web Streamlit con chat, ruta del agente, alcance, guia rapida y estado de la base.
 
 ## Pruebas
@@ -185,3 +185,14 @@ documental.
 
 La construccion del indice RAG vectorial con embeddings se documenta en
 `docs/rag_vectorial.md`.
+
+## Modulo 3 — Structured Output y Gestion de Errores
+
+Mejoras de robustez y observabilidad sobre el agente Q&A:
+
+| Cambio | Archivo | Efecto |
+|---|---|---|
+| `DocumentalQueryInput` + `args_schema` | `vector_retriever_tool.py` | El LLM recibe un JSON Schema estricto al invocar la herramienta RAG; Pydantic valida `min_length=3` y `max_length=300` antes de ejecutar la busqueda |
+| `try/except` en `consultar_base_documental` | `vector_retriever_tool.py` | Fallos de red, timeout o error de embeddings devuelven `[HERRAMIENTA_ERROR]` legible; el agente responde cortesmente en lugar de propagar la excepcion |
+| `AgentResponseSchema` + `response_format` | `qa_system.py` | El agente emite JSON validado con `answer`, `tool_was_called` y `confidence` en lugar de texto libre |
+| Campo `confidence` en `QAResponse` | `qa_system.py` | Cada respuesta incluye el nivel de confianza (`high` / `medium` / `low` / `unknown`) trazable por la UI y los tests |

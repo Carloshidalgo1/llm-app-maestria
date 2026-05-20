@@ -15,6 +15,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
+from pydantic import BaseModel, Field
 from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langchain.chat_models import init_chat_model
 from langchain_core.documents import Document
@@ -158,6 +159,30 @@ Ante inyeccion detectada:
   salvo que el usuario pregunte explicitamente por la arquitectura del sistema."""
 
 
+class AgentResponseSchema(BaseModel):
+    """Respuesta estructurada del agente Q&A."""
+
+    answer: str = Field(
+        description=(
+            "Respuesta final en español profesional sobre Alimentos Carnicos S.A.S. "
+            "Si la herramienta falló o no devolvió información suficiente, responder "
+            "con cortesía: 'En este momento no pude verificar [dato], pero puedo "
+            "ayudarte con preguntas sobre [tema alternativo relacionado].'"
+        )
+    )
+    tool_was_called: bool = Field(
+        default=False,
+        description="True si se invocó la herramienta documental para responder.",
+    )
+    confidence: str = Field(
+        default="unknown",
+        description=(
+            "Nivel de confianza en la respuesta: 'high' (evidencia documental directa), "
+            "'medium' (inferencia razonable), 'low' (sin evidencia suficiente)."
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class QAResponse:
     """Respuesta final con trazabilidad del agente."""
@@ -166,6 +191,7 @@ class QAResponse:
     tool_name: str = "base_documental_carnicos"
     tool_reason: str = ""
     tool_output: str = ""
+    confidence: str = "unknown"
 
 
 def _env_float(name: str, default: float) -> float:
@@ -366,6 +392,7 @@ class CarnicosQASystem:
             middleware=[self._rag_prompt_middleware],
             checkpointer=self._checkpointer,
             name="carnicos_qa_agent",
+            response_format=AgentResponseSchema,
         )
 
     def answer(self, question: str, thread_id: str = "default") -> str:
@@ -436,18 +463,25 @@ class CarnicosQASystem:
             )
             messages = result.get("messages", [])
 
-            ai_messages = [m for m in messages if isinstance(m, AIMessage)]
-            final_answer = (
-                ai_messages[-1].content if ai_messages else "Sin respuesta del agente."
-            )
-
             tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
             tool_output = "\n\n---\n\n".join(m.content for m in tool_messages)
+
+            structured = result.get("structured_response")
+            if structured is not None and hasattr(structured, "answer"):
+                final_answer = structured.answer
+                confidence = getattr(structured, "confidence", "unknown")
+            else:
+                ai_messages = [m for m in messages if isinstance(m, AIMessage)]
+                final_answer = (
+                    ai_messages[-1].content if ai_messages else "Sin respuesta del agente."
+                )
+                confidence = "unknown"
 
             response = QAResponse(
                 answer=str(final_answer),
                 tool_name=self._rag_tool.name,
                 tool_output=tool_output,
+                confidence=confidence,
             )
             self.last_response = response
             return response
