@@ -8,20 +8,23 @@ Checkpointer: PostgresSaver si DATABASE_URL esta configurada.
 """
 
 import os
+import re
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from pydantic import BaseModel, Field
 from langchain.agents.middleware import HumanInTheLoopMiddleware
+from langchain.agents.middleware.human_in_the_loop import InterruptOnConfig
 from langchain.chat_models import init_chat_model
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 try:
     import psycopg
@@ -45,6 +48,42 @@ from .paths import (
 )
 
 load_dotenv()
+
+
+HITL_CRITICAL_PATTERNS: list[str] = [
+    r"precio[s]?\b",
+    r"tarifa[s]?\b",
+    r"costo[s]?\b",
+    r"contrat[oa]\b",
+    r"licitaci[oó]n\b",
+    r"n[uú]mero[s]?\s+de\s+(empleado|trabajador|personal)",
+    r"n[oó]mina\b",
+    r"\bNIT\b",
+    r"\bRUT\b",
+    r"c[eé]dula\b",
+    r"proveedor[es]?\b",
+    r"cliente[s]?\s+nominales?\b",
+]
+
+
+def _describe_rag_interrupt(tool_call: dict, state: object, _runtime: object) -> str:
+    """Genera la descripcion que verá el operador en el panel de aprobacion HITL.
+
+    AgentState es un TypedDict — es un dict en runtime. Se accede con state["key"],
+    no con state.key (que devolveria metodos del dict como .values()).
+    """
+    query: str = tool_call.get("args", {}).get("query", "")
+    is_critical = any(re.search(p, query, re.IGNORECASE) for p in HITL_CRITICAL_PATTERNS)
+    level = "CRITICA" if is_critical else "RUTINARIA"
+    messages = state.get("messages", []) if isinstance(state, dict) else []
+    last_user = next(
+        (m.content[:150] for m in reversed(messages) if isinstance(m, HumanMessage)), "N/A"
+    )
+    return (
+        f"Consulta {level} al RAG documental\n\n"
+        f"Query enviada al vector store:\n  {query}\n\n"
+        f"Pregunta original del usuario:\n  {last_user}"
+    )
 
 
 DEFAULT_MODEL = "openai:gpt-4o-mini"
@@ -192,6 +231,8 @@ class QAResponse:
     tool_reason: str = ""
     tool_output: str = ""
     confidence: str = "unknown"
+    pending_approval: bool = False
+    interrupt_payload: dict | None = field(default=None)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -228,8 +269,11 @@ class CarnicosQASystem:
         temperature: float | None = None,
         max_tokens: int | None = None,
         verbose: bool = True,
+        hitl_enabled: bool | None = None,
     ):
         self.verbose = verbose
+        env_hitl = os.getenv("HITL_ENABLED", "false").strip().lower() == "true"
+        self.hitl_enabled: bool = hitl_enabled if hitl_enabled is not None else env_hitl
         self.model = model or os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
         self.temperature = (
             temperature
@@ -277,6 +321,8 @@ class CarnicosQASystem:
         self._checkpointer = self._create_checkpointer()
         self._agent = self._build_agent()
         self.last_response: QAResponse | None = None
+        hitl_status = "activado" if self.hitl_enabled else "desactivado"
+        self._log(f"  HITL: {hitl_status}")
         self._log("\nAgente LangChain inicializado correctamente.")
 
     def _log(self, message: str) -> None:
@@ -347,15 +393,19 @@ class CarnicosQASystem:
         )
 
     def _build_hitl_middleware(self) -> HumanInTheLoopMiddleware:
-        """Crea HumanInTheLoopMiddleware que requiere aprobacion antes de ejecutar la herramienta RAG.
+        """Crea HumanInTheLoopMiddleware con InterruptOnConfig y descripcion dinamica.
 
-        En produccion, interrumpe el flujo para que un operador pueda revisar
-        la consulta antes de que se ejecute la busqueda documental.
-        Para tests automatizados, configurar interrupt_on con False.
+        Permite al operador aprobar, editar o rechazar cada consulta RAG.
+        La funcion _describe_rag_interrupt clasifica la consulta como CRITICA o
+        RUTINARIA segun HITL_CRITICAL_PATTERNS y muestra la pregunta original.
         """
         return HumanInTheLoopMiddleware(
-            interrupt_on={self._rag_tool.name: True},
-            description_prefix="Aprobacion requerida para consulta documental",
+            interrupt_on={
+                self._rag_tool.name: InterruptOnConfig(
+                    allowed_decisions=["approve", "edit", "reject"],
+                    description=_describe_rag_interrupt,
+                )
+            }
         )
 
     def _create_checkpointer(self):
@@ -382,14 +432,17 @@ class CarnicosQASystem:
     def _build_agent(self):
         """Construye el agente con create_agent, middleware RAG y checkpointer.
 
-        HumanInTheLoopMiddleware se omite intencionalmente: sin un flujo de aprobacion
-        en la UI, interrumpe cada tool_call y deja el estado del checkpointer con
-        AIMessage(tool_calls) sin su ToolMessage correspondiente, causando error 400.
+        HumanInTheLoopMiddleware se incluye solo cuando self.hitl_enabled es True.
+        Con HITL activo, el agente interrumpe despues del modelo y antes del tool
+        para que el operador apruebe, edite o rechace la consulta RAG.
         """
+        middleware = [self._rag_prompt_middleware]
+        if self.hitl_enabled:
+            middleware.append(self._hitl_middleware)
         return create_agent(
             model=self.llm,
             tools=[self._rag_tool],
-            middleware=[self._rag_prompt_middleware],
+            middleware=middleware,
             checkpointer=self._checkpointer,
             name="carnicos_qa_agent",
             response_format=AgentResponseSchema,
@@ -461,6 +514,41 @@ class CarnicosQASystem:
                 {"messages": [HumanMessage(content=question)]},
                 config=config,
             )
+
+            # Detectar interrupcion HITL: el grafo pausó esperando decision del operador.
+            # HITLRequest y ActionRequest son TypedDict — dicts en runtime, acceso por clave.
+            agent_state = self._agent.get_state(config)
+            if agent_state.interrupts:
+                intr = agent_state.interrupts[0]
+                intr_value = intr.value
+                action_requests = (
+                    intr_value.get("action_requests", [])
+                    if isinstance(intr_value, dict)
+                    else []
+                )
+                first_ar = action_requests[0] if action_requests else {}
+                query = (
+                    first_ar.get("args", {}).get("query", "")
+                    if isinstance(first_ar, dict)
+                    else ""
+                )
+                description = (
+                    first_ar.get("description", str(intr_value))
+                    if isinstance(first_ar, dict)
+                    else str(intr_value)
+                )
+                response = QAResponse(
+                    answer="",
+                    pending_approval=True,
+                    interrupt_payload={
+                        "description": description,
+                        "query": query,
+                        "thread_id": thread_id,
+                    },
+                )
+                self.last_response = response
+                return response
+
             messages = result.get("messages", [])
 
             tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
@@ -489,6 +577,100 @@ class CarnicosQASystem:
         except Exception as exc:
             response = QAResponse(
                 answer=f"Error al procesar la pregunta: {exc}",
+                tool_name="error",
+            )
+            self.last_response = response
+            return response
+
+    def resume_with_decision(
+        self,
+        thread_id: str,
+        decision_type: str,
+        message: str = "",
+        edited_query: str | None = None,
+    ) -> QAResponse:
+        """Reanuda el agente tras una interrupcion HITL con la decision del operador.
+
+        Args:
+            thread_id: Identificador del hilo interrumpido.
+            decision_type: "approve" | "edit" | "reject".
+            message: Motivo del rechazo (solo para decision_type="reject").
+            edited_query: Nueva query (solo para decision_type="edit").
+        """
+        if decision_type == "approve":
+            decision: dict = {"type": "approve"}
+        elif decision_type == "edit" and edited_query is not None:
+            decision = {
+                "type": "edit",
+                "edited_action": {
+                    "name": self._rag_tool.name,
+                    "args": {"query": edited_query},
+                },
+            }
+        elif decision_type == "reject":
+            decision = {
+                "type": "reject",
+                "message": message or "Consulta rechazada por el operador.",
+            }
+        else:
+            return QAResponse(
+                answer=f"Tipo de decision no valido: '{decision_type}'. Use approve, edit o reject.",
+                tool_name="error",
+            )
+
+        try:
+            config = {"configurable": {"thread_id": thread_id}}
+            result = self._agent.invoke(
+                Command(resume={"decisions": [decision]}),
+                config=config,
+            )
+
+            # Para "reject": el middleware deja el tool_call en revised_tool_calls,
+            # por lo que el ToolNode lo ejecuta de todas formas y el agente puede
+            # responder con datos reales del RAG. Se fuerza una respuesta de rechazo
+            # explicita independientemente de lo que el agente haya generado.
+            if decision_type == "reject":
+                rejection_reason = message or "Consulta rechazada por el operador."
+                response = QAResponse(
+                    answer=(
+                        f"La consulta documental fue rechazada por el operador. "
+                        f"{rejection_reason}"
+                    ),
+                    tool_name=self._rag_tool.name,
+                    tool_output="",
+                    confidence="low",
+                )
+                self.last_response = response
+                return response
+
+            messages = result.get("messages", [])
+
+            tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+            tool_output = "\n\n---\n\n".join(m.content for m in tool_messages)
+
+            structured = result.get("structured_response")
+            if structured is not None and hasattr(structured, "answer"):
+                final_answer = structured.answer
+                confidence = getattr(structured, "confidence", "unknown")
+            else:
+                ai_messages = [m for m in messages if isinstance(m, AIMessage)]
+                final_answer = (
+                    ai_messages[-1].content if ai_messages else "Sin respuesta del agente."
+                )
+                confidence = "unknown"
+
+            response = QAResponse(
+                answer=str(final_answer),
+                tool_name=self._rag_tool.name,
+                tool_output=tool_output,
+                confidence=confidence,
+            )
+            self.last_response = response
+            return response
+
+        except Exception as exc:
+            response = QAResponse(
+                answer=f"Error al reanudar el agente: {exc}",
                 tool_name="error",
             )
             self.last_response = response

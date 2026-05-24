@@ -122,6 +122,23 @@ def render_sidebar() -> Dict[str, object]:
     else:
         st.sidebar.info("LangSmith tracing desactivado")
 
+    st.sidebar.divider()
+    env_hitl = os.getenv("HITL_ENABLED", "false").strip().lower() == "true"
+    hitl_enabled = st.sidebar.toggle(
+        "Control humano (HITL)",
+        value=env_hitl,
+        help=(
+            "Activa aprobacion manual antes de cada consulta al vector store RAG. "
+            "Permite aprobar, editar o rechazar la query antes de ejecutarla. "
+            "Cambia este toggle reconstruye el agente automaticamente."
+        ),
+    )
+    if hitl_enabled:
+        st.sidebar.warning("Aprobacion requerida en cada consulta RAG", icon="🔒")
+    else:
+        st.sidebar.info("HITL desactivado — respuestas automaticas", icon="⚡")
+    st.sidebar.divider()
+
     default_model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     default_temperature = parse_float(os.getenv("OPENAI_TEMPERATURE"), DEFAULT_TEMPERATURE)
     default_max_tokens = parse_int(os.getenv("OPENAI_MAX_TOKENS"), DEFAULT_MAX_TOKENS)
@@ -169,6 +186,7 @@ def render_sidebar() -> Dict[str, object]:
         "temperature": float(temperature),
         "max_tokens": int(max_tokens),
         "documental_retriever": retriever_config["backend"],
+        "hitl_enabled": hitl_enabled,
     }
 
 
@@ -242,6 +260,7 @@ def render_assistant(config: Dict[str, object]) -> None:
             str(config["model"]),
             float(config["temperature"]),
             int(config["max_tokens"]),
+            bool(config["hitl_enabled"]),
         )
     except Exception as exc:
         st.error(f"No fue posible inicializar el asistente: {exc}")
@@ -272,11 +291,56 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
         st.session_state.thread_id = str(uuid.uuid4())
 
     for message in st.session_state.messages:
+        if message["role"] == "hitl_decision":
+            _render_hitl_decision_badge(message["content"], message.get("decision_type", ""))
+            continue
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if message["role"] == "assistant" and message.get("tool_output"):
                 render_agent_trace(tool_output=str(message.get("tool_output", "")))
 
+    # Caso 1: El operador ya tomo una decision — reanudar el agente.
+    if "hitl_decision" in st.session_state:
+        decision = st.session_state.pop("hitl_decision")
+        st.session_state.pop("hitl_pending_payload", None)
+        decision_type = decision["type"]
+
+        badge_text = _build_decision_badge_text(decision)
+        _render_hitl_decision_badge(badge_text, decision_type)
+        st.session_state.messages.append(
+            {"role": "hitl_decision", "content": badge_text, "decision_type": decision_type}
+        )
+
+        with st.chat_message("assistant"):
+            with st.spinner("Ejecutando consulta con la decision del operador..."):
+                qa_response = qa_system.resume_with_decision(
+                    thread_id=st.session_state.thread_id,
+                    decision_type=decision_type,
+                    message=decision.get("message", ""),
+                    edited_query=decision.get("edited_query"),
+                )
+            st.markdown(qa_response.answer)
+            if qa_response.tool_output:
+                render_agent_trace(tool_output=qa_response.tool_output)
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": qa_response.answer,
+                "tool_output": qa_response.tool_output,
+            }
+        )
+        # No retornamos aqui: la ejecucion cae al st.chat_input() para que
+        # el input quede visible inmediatamente despues de mostrar la respuesta.
+
+    # Caso 2: Hay una aprobacion pendiente del ciclo anterior — re-mostrar el panel
+    # sin volver a llamar al agente. Cualquier interaccion (expander, popover) causa
+    # un rerun; persistir el payload en session_state evita que el panel desaparezca.
+    if "hitl_pending_payload" in st.session_state:
+        with st.chat_message("assistant"):
+            _render_hitl_approval_panel(st.session_state["hitl_pending_payload"])
+        return
+
+    # Caso 3: Nueva pregunta del usuario.
     typed_question = st.chat_input("Escribe una pregunta sobre Alimentos Carnicos...")
     pending_question = st.session_state.pop("pending_question", None)
     question = pending_question or typed_question
@@ -294,7 +358,13 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
                 question,
                 thread_id=st.session_state.thread_id,
             )
-            answer = qa_response.answer
+
+        if qa_response.pending_approval:
+            st.session_state["hitl_pending_payload"] = qa_response.interrupt_payload
+            _render_hitl_approval_panel(qa_response.interrupt_payload)
+            return
+
+        answer = qa_response.answer
         st.markdown(answer)
         if qa_response.tool_output:
             render_agent_trace(tool_output=qa_response.tool_output)
@@ -306,6 +376,72 @@ def render_chat(qa_system: CarnicosQASystem) -> None:
             "tool_output": qa_response.tool_output,
         }
     )
+
+
+def _render_hitl_approval_panel(payload: dict | None) -> None:
+    """Muestra el panel de aprobacion HITL con los botones Aprobar / Editar / Rechazar.
+
+    Recibe el payload del interrupt directamente (no el QAResponse) para poder
+    re-renderizarse en reruns sucesivos sin volver a llamar al agente.
+    """
+    payload = payload or {}
+    query: str = payload.get("query", "")
+    description: str = payload.get("description", "")
+
+    st.warning("El agente requiere aprobacion antes de consultar la base documental.", icon="🔒")
+
+    with st.expander("Detalle de la consulta pendiente", expanded=True):
+        st.text(description)
+
+    col_approve, col_edit, col_reject = st.columns(3)
+
+    with col_approve:
+        if st.button("Aprobar", use_container_width=True, type="primary"):
+            st.session_state.hitl_decision = {"type": "approve"}
+            st.rerun()
+
+    with col_edit:
+        with st.popover("Editar query", use_container_width=True):
+            edited = st.text_area("Modifica la query antes de ejecutar:", value=query, height=80)
+            if st.button("Confirmar edicion", use_container_width=True):
+                st.session_state.hitl_decision = {"type": "edit", "edited_query": edited.strip()}
+                st.rerun()
+
+    with col_reject:
+        with st.popover("Rechazar", use_container_width=True):
+            reason = st.text_input("Motivo del rechazo (opcional):")
+            if st.button("Confirmar rechazo", use_container_width=True):
+                st.session_state.hitl_decision = {
+                    "type": "reject",
+                    "message": reason.strip() or "Consulta rechazada por el operador.",
+                }
+                st.rerun()
+
+
+def _build_decision_badge_text(decision: dict) -> str:
+    """Construye el texto del badge segun el tipo de decision HITL."""
+    dtype = decision["type"]
+    if dtype == "approve":
+        return "Operador: consulta aprobada — se ejecutara la busqueda documental."
+    if dtype == "edit":
+        edited = decision.get("edited_query", "")
+        return f"Operador: query editada antes de ejecutar.\nQuery enviada: `{edited}`"
+    if dtype == "reject":
+        reason = decision.get("message", "sin motivo indicado")
+        return f"Operador: consulta rechazada.\nMotivo: {reason}"
+    return f"Operador: decision '{dtype}'."
+
+
+def _render_hitl_decision_badge(text: str, decision_type: str) -> None:
+    """Renderiza el badge de decision HITL con el icono y color correspondiente."""
+    if decision_type == "approve":
+        st.success(text, icon="✅")
+    elif decision_type == "edit":
+        st.info(text, icon="✏️")
+    elif decision_type == "reject":
+        st.error(text, icon="❌")
+    else:
+        st.info(text)
 
 
 def render_agent_trace(tool_output: str) -> None:
@@ -426,6 +562,7 @@ def get_qa_system(
     model: str,
     temperature: float,
     max_tokens: int,
+    hitl_enabled: bool = False,
 ) -> CarnicosQASystem:
     return CarnicosQASystem(
         knowledge_dir=knowledge_path,
@@ -433,6 +570,7 @@ def get_qa_system(
         temperature=temperature,
         max_tokens=max_tokens,
         verbose=False,
+        hitl_enabled=hitl_enabled,
     )
 
 
