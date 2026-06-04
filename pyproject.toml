@@ -28,12 +28,16 @@ dependencies = [
     "streamlit>=1.38",
     "trafilatura>=1.12",
     "urllib3>=2.2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pre-commit>=4.6.0",
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
     "ruff>=0.8",
 ]
 
@@ -46,6 +50,7 @@ carnicos-qa = "carnicos_kb.qa_system:main"
 carnicos-app = "carnicos_kb.streamlit_runner:main"
 carnicos-validate-mod1 = "carnicos_kb.validate_module1:main"
 carnicos-build-rag = "carnicos_kb.rag_index_builder:main"
+carnicos-api = "carnicos_kb.api:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/carnicos_kb"]
@@ -55,6 +60,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 tmp_path_retention_policy = "failed"
 addopts = "--basetemp=.pytest_tmp"
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100

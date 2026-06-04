@@ -105,6 +105,8 @@ make rag-index
 make test
 make lint
 make app
+make api
+make ngrok
 ```
 
 Equivalentes directos con `uv`:
@@ -117,6 +119,80 @@ uv run carnicos-build-rag --dataset-dir data/processed/dataset_carnicos
 uv run carnicos-app --server.address localhost --server.port 8501
 uv run --extra dev pytest --basetemp .pytest_tmp
 ```
+
+## API REST
+
+La API FastAPI expone el agente Q&A como servicio HTTP. Se inicia con:
+
+```powershell
+make api
+```
+
+Endpoints disponibles:
+
+- `POST /chat` — Enviar una pregunta al agente. Campos: `message` (str) y `phone_number` (str, usado como `thread_id` para memoria de sesion).
+- `POST /chat/resume` — Reanudar un flujo con interrupcion humana. Campos: `thread_id`, `decision` (`approve` / `edit` / `reject`) y opcionalmente `edited_query`.
+- `GET /health` — Estado del servicio y del agente.
+
+Ejemplo de llamada con PowerShell:
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8000/health
+```
+
+## Exposicion publica con ngrok
+
+ngrok crea un tunel HTTPS publico hacia la API local (puerto 8000), util para integrar con n8n u otros servicios externos.
+
+**Requisito:** tener ngrok instalado. En Windows con Chocolatey:
+
+```powershell
+choco install ngrok
+```
+
+**Uso:** en terminales separadas, ejecutar primero la API y luego ngrok:
+
+```powershell
+# Terminal 1
+make api
+
+# Terminal 2
+make ngrok
+```
+
+ngrok imprimira una URL publica del tipo `https://<id>.ngrok-free.app`. Para consultar la URL activa desde PowerShell:
+
+```powershell
+(Invoke-RestMethod http://localhost:4040/api/tunnels).tunnels[0].public_url
+```
+
+**Header obligatorio para clientes API:** el tier gratuito de ngrok muestra una pagina de advertencia en el navegador. Las llamadas programaticas (n8n, curl, scripts) deben incluir el header:
+
+```
+ngrok-skip-browser-warning: 1
+```
+
+Ejemplo con PowerShell:
+
+```powershell
+$url = (Invoke-RestMethod http://localhost:4040/api/tunnels).tunnels[0].public_url
+Invoke-RestMethod -Uri "$url/health" -Headers @{"ngrok-skip-browser-warning" = "1"}
+```
+
+Ejemplo de llamada al endpoint `/chat`:
+
+```powershell
+$url = (Invoke-RestMethod http://localhost:4040/api/tunnels).tunnels[0].public_url
+$body = @{ message = "Que productos ofrece Carnicos?"; phone_number = "573001234567" } | ConvertTo-Json
+Invoke-RestMethod -Uri "$url/chat" -Method Post -Body $body -ContentType "application/json" -Headers @{"ngrok-skip-browser-warning" = "1"}
+```
+
+**Configuracion en n8n (nodo HTTP Request):**
+
+- URL: la URL publica de ngrok
+- Method: `POST`
+- Body: JSON con `message` y `phone_number`
+- Header adicional: `ngrok-skip-browser-warning: 1`
 
 ## Flujo de trabajo
 

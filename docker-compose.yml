@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: carnicos_postgres
+    environment:
+      POSTGRES_USER: carnicos
+      POSTGRES_PASSWORD: carnicos123
+      POSTGRES_DB: carnicos_kb
+    ports:
+      - "5432:5432"
+    volumes:
+      - carnicos_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  carnicos_pgdata:
