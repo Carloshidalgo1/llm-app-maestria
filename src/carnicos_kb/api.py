@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from typing import Literal
 import os
+import re
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -58,9 +59,18 @@ class HealthResponse(BaseModel):
     agent_ready: bool
 
 
+def _whatsapp_format(text: str) -> str:
+    """Convierte markdown estándar a formato WhatsApp y limpia artefactos residuales."""
+    # **bold** → *bold*
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    # elimina headers markdown (## Título → Título)
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    return text.strip()
+
+
 def _map_response(qa_resp: QAResponse, thread_id: str) -> ChatResponse:
     return ChatResponse(
-        answer=qa_resp.answer,
+        answer=_whatsapp_format(qa_resp.answer),
         confidence=qa_resp.confidence,
         tool_was_called=qa_resp.tool_output != "",
         pending_approval=qa_resp.pending_approval,
