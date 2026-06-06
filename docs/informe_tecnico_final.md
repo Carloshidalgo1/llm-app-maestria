@@ -30,7 +30,7 @@ La solución construida a lo largo de tres módulos es un asistente conversacion
 2. La convierte en una base de conocimiento indexada con embeddings vectoriales (RAG).
 3. Expone el agente a través de una API REST (FastAPI) publicada en internet con ngrok.
 4. Orquesta el flujo de mensajes de WhatsApp mediante N8N, usando Twilio como gateway SMS/WhatsApp.
-5. Da loa posibilidad mas adelante de incorporar un mecanismo de supervisión humana (HITL) para consultas sensibles o atención personalizada.
+5. Da la posibilidad mas adelante de incorporar un mecanismo de supervisión humana (HITL) para consultas sensibles o atención personalizada.
 
 ---
 
@@ -146,7 +146,7 @@ El Módulo 3 unifica el agente en un único grafo LangGraph ReAct, elimina el ro
 
 ### 3.1 Justificación de la elección
 
-El proyecto sigue la **Ruta A**: servidor propio con FastAPI expuesto a internet mediante ngrok, orquestación del flujo de mensajes con N8N y gateway de WhatsApp con Twilio. Esta decisión se toma sobre tres ejes:
+El proyecto sigue la Ruta A: servidor propio con FastAPI expuesto a internet mediante ngrok, orquestación del flujo de mensajes con N8N y gateway de WhatsApp con Twilio. Esta decisión se toma sobre tres ejes:
 
 **a) Control total del agente**
 
@@ -296,7 +296,7 @@ El `thread_id` es el número de teléfono del usuario, lo que permite al agente 
 
 ### 5.3 HITL — Control humano en consultas sensibles
 
-`HumanInTheLoopMiddleware` intercepta el flujo después de que el LLM genera el `tool_call` y **antes** de que el vector store ejecute la búsqueda. El operador puede:
+`HumanInTheLoopMiddleware` intercepta el flujo después de que el LLM genera el `tool_call` y antes de que el vector store ejecute la búsqueda. El operador puede:
 
 | Decisión | Efecto |
 |---|---|
@@ -304,7 +304,7 @@ El `thread_id` es el número de teléfono del usuario, lo que permite al agente 
 | Editar | El operador reformula la query antes de que llegue al RAG |
 | Rechazar | El usuario recibe una respuesta de rechazo; el RAG no se ejecuta |
 
-Las consultas se clasifican automáticamente como CRÍTICA** o **RUTINARIA** según patrones regex (`precios`, `contratos`, `NIT`, `nómina`, `proveedores`, etc.). Esta clasificación es informativa para el operador.
+Las consultas se clasifican automáticamente como CRÍTICA o RUTINARIA según patrones regex (`precios`, `contratos`, `NIT`, `nómina`, `proveedores`, etc.). Esta clasificación es informativa para el operador.
 
 La persistencia del estado durante la espera de la decisión usa `PostgresSaver` en producción e `InMemorySaver` en desarrollo.
 
@@ -347,7 +347,7 @@ HTTP Request
     Respuesta: { "answer": "...", "confidence": "high|medium|low" }
     │
     ▼
-IF  (confidence == "low")
+IF  (confidence == "low" and tool_was_called == false)
     │                        │
    TRUE                    FALSE
     │                        │

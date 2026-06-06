@@ -1,245 +1,254 @@
 # Carnicos KB
 
-Proyecto Python para construir una base de conocimiento en Markdown sobre **Alimentos Carnicos S.A.S.** a partir de scraping web, extraccion de PDFs y segmentacion en chunks para alimentar un LLM.
+> Asistente conversacional para **Alimentos Cárnicos S.A.S.** (Grupo Nutresa) desplegado en **WhatsApp**. Responde preguntas de primer contacto usando una base de conocimiento construida con web scraping y documentos públicos de la empresa, indexada con embeddings vectoriales (RAG) y enrutada mediante un agente LangGraph ReAct.
 
-## Estructura
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688)
+![LangGraph](https://img.shields.io/badge/LangGraph-ReAct-orange)
+![WhatsApp](https://img.shields.io/badge/Canal-WhatsApp-25D366)
 
-```text
-.
-├── data/
-│   ├── raw/
-│   │   └── pdfs/                          # PDFs fuente
-│   ├── processed/
-│   │   ├── dataset_carnicos/              # Markdown extraido
-│   │   └── base_conocimiento_chunks.md
-│   └── structured/
-│       └── carnicos_structured_faq.json   # Datos concretos (herramienta estructurada)
-├── docs/
-│   ├── Requisitos.txt
-│   ├── definicion_alcance.md
-│   ├── informe_modulo_1.md
-│   ├── informe_modulo_2.md                # Informe de sustentacion Modulo 2
-│   ├── memoria_conversacional_modulo_2.md
-│   ├── rag_vectorial.md
-│   ├── GUIA_RAPIDA.md
-│   └── QA_SYSTEM.md
-├── src/
-│   └── carnicos_kb/
-│       ├── chunking.py                    # Limpieza y chunking semantico
-│       ├── vector_retriever_tool.py       # Recuperador documental vectorial
-│       ├── document_retriever_tool.py     # Utilidades de parseo de chunks Markdown
-│       ├── knowledge_loader.py            # Carga de la base de conocimiento
-│       ├── langsmith_config.py            # Estado de configuracion LangSmith
-│       ├── paths.py                       # Rutas por defecto del proyecto
-│       ├── pdf_extractor.py               # Extraccion PDF con Docling
-│       ├── pdf_text_extractor.py          # Extraccion PDF con PyMuPDF
-│       ├── qa_system.py                   # Agente Q&A con router y memoria
-│       ├── rag_index_builder.py           # Construccion del indice RAG vectorial
-│       ├── scraper.py                     # Scraping web desde sitemap
-│       ├── streamlit_app.py               # Interfaz web Streamlit
-│       ├── streamlit_runner.py            # Punto de entrada Streamlit
-│       ├── structured_data_tool.py        # Herramienta LangChain estructurada
-│       ├── text_matching.py               # Utilidades de busqueda lexica
-│       └── validate_module1.py            # Validacion base Modulo 1
-├── tests/
-│   ├── conftest.py                        # Desactiva LangSmith en pruebas
-│   ├── test_agent_contract.py             # Contrato del router y QAResponse
-│   ├── test_chunking.py                   # Limpieza y segmentacion
-│   ├── test_conversation_memory.py        # Memoria conversacional
-│   ├── test_document_retriever_tool.py    # Herramienta documental
-│   ├── test_rag_index_builder.py          # Indice RAG vectorial
-│   ├── test_routing_end_to_end.py         # Enrutamiento end-to-end con mock
-│   └── test_structured_data_tool.py       # Herramienta estructurada
-├── .env.example
-├── .gitignore
-├── .pre-commit-config.yaml
-├── Makefile
-├── pyproject.toml
-├── README.md
-└── uv.lock
+---
+
+## Descripción general
+
+El sistema recibe mensajes de WhatsApp a través de **Twilio**, los enruta con **N8N** hacia una **API FastAPI** que ejecuta un agente **LangGraph ReAct** con acceso a una base vectorial. Cada respuesta incluye un campo `confidence` que determina si el agente responde directamente al cliente o escala la consulta a un asesor humano.
+
+| Componente | Tecnología |
+|---|---|
+| Canal de mensajería | WhatsApp vía Twilio |
+| Orquestación del flujo | N8N |
+| Túnel HTTPS local | ngrok |
+| API REST | FastAPI |
+| Agente de razonamiento | LangGraph ReAct + GPT-4o-mini |
+| Base vectorial | PGVector (prod) / InMemoryVectorStore (dev) |
+| Memoria conversacional | PostgresSaver (prod) / InMemorySaver (dev) |
+| Supervisión humana | HITL Middleware (opcional) |
+
+---
+
+## Arquitectura
+
 ```
+ Usuario
+ (WhatsApp)
+     |
+     | mensaje entrante
+     v
+ +--------+     +------------+     +--------+     +---------+
+ | Twilio | --> |    N8N     | --> | ngrok  | --> | FastAPI |
+ +--------+     | (6 nodos)  |     +--------+     +---------+
+                +------------+                         |
+                      ^                                | POST /chat
+                      |                                v
+                      |                    +---------------------+
+                      |                    |  Agente LangGraph   |
+                      |                    |  ReAct (GPT-4o-mini)|
+                      |                    +---------------------+
+                      |                                |
+                      |                    +-----------+-----------+
+                      |                    |                       |
+                      |              InMemoryVectorStore      PostgreSQL
+                      |              / PGVector (prod)        (historial)
+                      |
+               IF confidence
+               "low" + tool_was_called
+                  /           \
+              TRUE             FALSE
+                |                 |
+        Escala asesor     Responde cliente
+        + notifica
+          cliente
+```
+
+---
+
+## Flujo N8N
+
+```
+Webhook --> Edit Fields --> HTTP Request --> IF --> Mensaje al asesor --> Mensaje al cliente
+                                              |
+                                              --> Respuesta del agente
+```
+
+| Nodo | Función |
+|---|---|
+| **Webhook** | Recibe el mensaje entrante de Twilio |
+| **Edit Fields** | Extrae y renombra `message` y `phone_number` |
+| **HTTP Request** | Llama a `POST /chat` en la API FastAPI |
+| **IF** | Evalúa `confidence == "low"` AND `tool_was_called == true` |
+| **Mensaje al asesor** | Alerta al asesor con contexto de la consulta (rama TRUE) |
+| **Mensaje al cliente** | Notifica al usuario que será atendido (rama TRUE) |
+| **Respuesta del agente** | Envía la respuesta directamente al cliente (rama FALSE) |
+
+> Ver [`docs/definicion_alcance.md`](docs/definicion_alcance.md) para el conjunto de preguntas de validación organizadas por grupo (alta confianza / baja confianza / fuera de dominio).
+
+---
 
 ## Requisitos
 
 - Python 3.10+
-- `uv`
+- [`uv`](https://github.com/astral-sh/uv) — gestor de dependencias
 - `make`
-- Opcional en Windows: Chocolatey para instalar herramientas base
+- Cuenta Twilio con número WhatsApp habilitado
+- Instancia N8N (local o en la nube)
+- ngrok instalado
 
-Instalacion con Chocolatey:
-
-```powershell
-choco install -y python uv make git
-```
-
-Tambien puedes usar el target:
+**Instalación de herramientas en Windows (Chocolatey):**
 
 ```powershell
-make bootstrap-choco
+choco install -y python uv make git ngrok
 ```
 
-## Instalacion
+---
 
-Con `uv`:
+## Instalación
 
 ```powershell
 make sync
 ```
 
-Con `pip`, si no quieres usar `uv`:
+---
+
+## Puesta en marcha
+
+### 1. Configurar variables de entorno
 
 ```powershell
-make install-pip
+copy .env.example .env
+# Editar .env con los valores reales
 ```
 
-Las dependencias se declaran en `pyproject.toml`. `uv.lock` conserva las versiones resueltas para instalaciones reproducibles.
-
-## Comandos principales
+### 2. Construir la base de conocimiento (primera vez)
 
 ```powershell
-make scrape
-make pdf
-make pdf-fast
-make chunk
-make rag-index
-make test
-make lint
-make app
+make scrape       # Extrae páginas del sitio web
+make pdf-fast     # Convierte PDFs a Markdown
+make chunk        # Genera chunks semánticos
+make rag-index    # Construye el índice vectorial en PGVector
+```
+
+### 3. Levantar el sistema
+
+```powershell
+# Terminal 1 — API del agente
 make api
+
+# Terminal 2 — túnel HTTPS público
 make ngrok
 ```
 
-Equivalentes directos con `uv`:
+ngrok imprime la URL pública. Configurar esa URL en el nodo **HTTP Request** de N8N.
 
-```powershell
-uv run carnicos-scrape --output-dir data/processed/dataset_carnicos
-uv run carnicos-pdf --input-dir data/raw/pdfs --output-dir data/processed/dataset_carnicos
-uv run carnicos-chunk --input-dir data/processed/dataset_carnicos --output data/processed/base_conocimiento_chunks.md
-uv run carnicos-build-rag --dataset-dir data/processed/dataset_carnicos
-uv run carnicos-app --server.address localhost --server.port 8501
-uv run --extra dev pytest --basetemp .pytest_tmp
-```
-
-## API REST
-
-La API FastAPI expone el agente Q&A como servicio HTTP. Se inicia con:
-
-```powershell
-make api
-```
-
-Endpoints disponibles:
-
-- `POST /chat` — Enviar una pregunta al agente. Campos: `message` (str) y `phone_number` (str, usado como `thread_id` para memoria de sesion).
-- `POST /chat/resume` — Reanudar un flujo con interrupcion humana. Campos: `thread_id`, `decision` (`approve` / `edit` / `reject`) y opcionalmente `edited_query`.
-- `GET /health` — Estado del servicio y del agente.
-
-Ejemplo de llamada con PowerShell:
-
-```powershell
-Invoke-RestMethod -Uri http://localhost:8000/health
-```
-
-## Exposicion publica con ngrok
-
-ngrok crea un tunel HTTPS publico hacia la API local (puerto 8000), util para integrar con n8n u otros servicios externos.
-
-**Requisito:** tener ngrok instalado. En Windows con Chocolatey:
-
-```powershell
-choco install ngrok
-```
-
-**Uso:** en terminales separadas, ejecutar primero la API y luego ngrok:
-
-```powershell
-# Terminal 1
-make api
-
-# Terminal 2
-make ngrok
-```
-
-ngrok imprimira una URL publica del tipo `https://<id>.ngrok-free.app`. Para consultar la URL activa desde PowerShell:
-
-```powershell
-(Invoke-RestMethod http://localhost:4040/api/tunnels).tunnels[0].public_url
-```
-
-**Header obligatorio para clientes API:** el tier gratuito de ngrok muestra una pagina de advertencia en el navegador. Las llamadas programaticas (n8n, curl, scripts) deben incluir el header:
+**Header obligatorio en N8N** (plan gratuito de ngrok):
 
 ```
 ngrok-skip-browser-warning: 1
 ```
 
-Ejemplo con PowerShell:
+---
 
-```powershell
-$url = (Invoke-RestMethod http://localhost:4040/api/tunnels).tunnels[0].public_url
-Invoke-RestMethod -Uri "$url/health" -Headers @{"ngrok-skip-browser-warning" = "1"}
+## Comandos disponibles
+
+| Comando | Descripción |
+|---|---|
+| `make scrape` | Extrae páginas del sitio web de la empresa |
+| `make pdf-fast` | Convierte PDFs a Markdown con PyMuPDF |
+| `make chunk` | Genera chunks semánticos del corpus |
+| `make rag-index` | Construye el índice vectorial en PGVector |
+| `make api` | Levanta la API FastAPI en `localhost:8000` |
+| `make ngrok` | Abre túnel HTTPS público hacia la API |
+| `make app` | Abre la interfaz Streamlit (panel HITL) |
+| `make test` | Ejecuta la suite de pruebas |
+| `make lint` | Revisa estilo con ruff |
+
+---
+
+## API REST
+
+### `POST /chat`
+
+Envía un mensaje al agente y obtiene la respuesta.
+
+```json
+// Request
+{
+  "message": "¿Qué marcas tiene Alimentos Cárnicos?",
+  "phone_number": "573001234567"
+}
+
+// Response
+{
+  "answer": "...",
+  "confidence": "high",
+  "tool_was_called": true,
+  "pending_approval": false,
+  "thread_id": "573001234567"
+}
 ```
 
-Ejemplo de llamada al endpoint `/chat`:
+### `POST /chat/resume`
 
-```powershell
-$url = (Invoke-RestMethod http://localhost:4040/api/tunnels).tunnels[0].public_url
-$body = @{ message = "Que productos ofrece Carnicos?"; phone_number = "573001234567" } | ConvertTo-Json
-Invoke-RestMethod -Uri "$url/chat" -Method Post -Body $body -ContentType "application/json" -Headers @{"ngrok-skip-browser-warning" = "1"}
+Reanuda un flujo pausado por el middleware HITL.
+
+```json
+// Request
+{
+  "thread_id": "573001234567",
+  "decision": "approve",
+  "edited_query": null
+}
 ```
 
-**Configuracion en n8n (nodo HTTP Request):**
+### `GET /health`
 
-- URL: la URL publica de ngrok
-- Method: `POST`
-- Body: JSON con `message` y `phone_number`
-- Header adicional: `ngrok-skip-browser-warning: 1`
+```json
+{ "status": "ok", "agent_ready": true }
+```
 
-## Flujo de trabajo
+**Campo `confidence`:**
 
-1. Guardar PDFs fuente en `data/raw/pdfs/`.
-2. Ejecutar `make scrape` para extraer paginas del sitio web.
-3. Ejecutar `make pdf` para extraer PDFs con Docling, o `make pdf-fast` para extraccion rapida con PyMuPDF.
-4. Ejecutar `make chunk` para generar `data/processed/base_conocimiento_chunks.md`.
-5. Ejecutar `make rag-index` para construir el indice vectorial en PostgreSQL/PGVector.
-6. Ejecutar `make app` para abrir la interfaz Streamlit del asistente Q&A.
+| Valor | Significado | Acción en N8N |
+|---|---|---|
+| `"high"` | Evidencia documental directa o interacción social | Responde al cliente |
+| `"medium"` | Inferencia razonable | Responde al cliente |
+| `"low"` | Sin evidencia suficiente (pregunta factual) | Escala al asesor |
+
+---
 
 ## Variables de entorno
 
-El proyecto puede leer `.env`. Usa `.env.example` como plantilla:
-
-```text
-SITEMAP_URL=https://alimentoscarnicos.com.co/wp-sitemap-posts-page-1.xml
-OUTPUT_DIR=data/processed/dataset_carnicos
-REQUEST_TIMEOUT=10
-REQUEST_DELAY=2
-USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
-OPENAI_API_KEY=sk_test_tu_api_key_aqui
-OPENAI_MODEL=gpt-5.4-nano
+```bash
+# LLM
+OPENAI_API_KEY=sk-proj-...
+OPENAI_MODEL=openai:gpt-4o-mini
 OPENAI_TEMPERATURE=0.2
 OPENAI_MAX_TOKENS=1500
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-CARNICOS_KNOWLEDGE_PATH=data/processed/base_conocimiento_chunks.md
-DATABASE_URL=postgresql://user:password@localhost:5432/carnicos_kb
+
+# Base vectorial — opcional, usa InMemory si no se configura
+DATABASE_URL=postgresql://user:pass@localhost:5432/carnicos_kb
 PG_COLLECTION_NAME=carnicos_rag
-RAG_CHUNK_SIZE=1000
+RAG_CHUNK_SIZE=1500
 RAG_CHUNK_OVERLAP=200
+
+# Control humano en el loop
+HITL_ENABLED=false
+
+# API
+API_HOST=0.0.0.0
+API_PORT=8000
+
+# Trazabilidad — opcional
 LANGSMITH_TRACING=false
-LANGSMITH_API_KEY=lsv2_pt_tu_api_key_aqui
+LANGSMITH_API_KEY=lsv2_pt_...
 LANGSMITH_PROJECT=carnicos-kb-agent
+
+# Scraping
+SITEMAP_URL=https://alimentoscarnicos.com.co/wp-sitemap-posts-page-1.xml
+REQUEST_DELAY=2
 ```
 
-## Modulos
-
-- `carnicos_kb.scraper`: scraping web desde sitemap XML con `requests`, `BeautifulSoup` y `trafilatura`.
-- `carnicos_kb.pdf_extractor`: conversion estructurada de PDFs a Markdown con Docling, por lotes.
-- `carnicos_kb.pdf_text_extractor`: conversion rapida de PDFs a Markdown con PyMuPDF.
-- `carnicos_kb.chunking`: limpieza conservadora y chunking semantico de Markdown.
-- `carnicos_kb.rag_index_builder`: construccion del indice RAG vectorial en PostgreSQL/PGVector con `text-embedding-3-small`.
-- `carnicos_kb.vector_retriever_tool`: herramientas LangChain para recuperacion semantica con PGVector e InMemoryVectorStore. Incluye `DocumentalQueryInput` (schema Pydantic con `args_schema` para validar entradas del LLM) y manejo de errores resiliente en `consultar_base_documental` (fallos de red o embeddings devuelven un mensaje guia en lugar de propagar la excepcion).
-- `carnicos_kb.document_retriever_tool`: utilidades para parsear chunks Markdown (IDs, titulo, fuente, texto).
-- `carnicos_kb.structured_data_tool`: herramienta LangChain para datos concretos en JSON.
-- `carnicos_kb.qa_system`: agente Q&A con memoria, router LangChain y trazas LangSmith. El agente emite respuestas validadas via `AgentResponseSchema` (`answer`, `tool_was_called`, `confidence`); `QAResponse` expone el campo `confidence` para indicar el nivel de evidencia documental de cada respuesta.
-- `carnicos_kb.streamlit_app`: interfaz web Streamlit con chat, ruta del agente, alcance, guia rapida y estado de la base.
+---
 
 ## Pruebas
 
@@ -247,28 +256,71 @@ LANGSMITH_PROJECT=carnicos-kb-agent
 make test
 ```
 
-Las pruebas validan limpieza, division por encabezados, construccion de chunks,
-memoria conversacional, herramienta estructurada, recuperador documental,
-contrato del router, indice RAG vectorial y enrutamiento end-to-end del agente
-con LLM mockeado.
+La suite cubre: chunking semántico, memoria conversacional, herramienta estructurada, recuperador documental, contrato del agente, construcción del índice RAG y enrutamiento end-to-end con LLM mockeado.
 
-## Modulo 2
+---
 
-La documentacion de sustentacion esta en `docs/informe_modulo_2.md`. Incluye el
-flujo Usuario -> Router -> Herramienta seleccionada -> LLM -> Respuesta, ademas
-de un guion de demo con preguntas para memoria, datos estructurados y base
-documental.
+## Estructura del proyecto
 
-La construccion del indice RAG vectorial con embeddings se documenta en
-`docs/rag_vectorial.md`.
+```text
+.
+├── data/
+│   ├── raw/pdfs/                              # PDFs fuente
+│   ├── processed/
+│   │   ├── dataset_carnicos/                  # Markdown extraído por scraper
+│   │   └── base_conocimiento_chunks.md        # Corpus consolidado con chunks
+│   └── structured/
+│       └── carnicos_structured_faq.json       # FAQ estructurado
+├── docs/
+│   ├── informe_tecnico_final.md               # Informe unificado Módulos 1-2-3
+│   ├── definicion_alcance.md                  # Alcance y preguntas de validación N8N
+│   ├── GUIA_RAPIDA.md                         # Inicio rápido y referencia de comandos
+│   ├── hitl_middleware.md                     # Documentación HITL
+│   ├── memoria_conversacional_modulo_2.md
+│   ├── rag_vectorial.md
+│   ├── informe_modulo_1.md
+│   └── informe_modulo_2.md
+├── src/
+│   └── carnicos_kb/
+│       ├── api.py                             # FastAPI: /chat, /chat/resume, /health
+│       ├── qa_system.py                       # Agente LangGraph ReAct + HITL
+│       ├── vector_retriever_tool.py           # Herramienta RAG (PGVector / InMemory)
+│       ├── document_retriever_tool.py         # Parseo de chunks Markdown
+│       ├── streamlit_app.py                   # Interfaz web con panel HITL
+│       ├── streamlit_runner.py                # Punto de entrada Streamlit
+│       ├── structured_data_tool.py            # Herramienta LangChain para datos JSON
+│       ├── rag_index_builder.py               # Construcción del índice PGVector
+│       ├── chunking.py                        # Limpieza y chunking semántico
+│       ├── knowledge_loader.py                # Carga de la base de conocimiento
+│       ├── scraper.py                         # Scraping web desde sitemap
+│       ├── pdf_extractor.py                   # Extracción PDF con Docling
+│       ├── pdf_text_extractor.py              # Extracción PDF con PyMuPDF
+│       ├── langsmith_config.py                # Configuración LangSmith
+│       ├── paths.py                           # Rutas por defecto del proyecto
+│       └── text_matching.py                   # Utilidades de búsqueda léxica
+├── tests/
+│   ├── conftest.py
+│   ├── test_agent_contract.py
+│   ├── test_chunking.py
+│   ├── test_conversation_memory.py
+│   ├── test_document_retriever_tool.py
+│   ├── test_rag_index_builder.py
+│   ├── test_routing_end_to_end.py
+│   └── test_structured_data_tool.py
+├── .env.example
+├── Makefile
+└── pyproject.toml
+```
 
-## Modulo 3 — Structured Output y Gestion de Errores
+---
 
-Mejoras de robustez y observabilidad sobre el agente Q&A:
+## Documentación
 
-| Cambio | Archivo | Efecto |
-|---|---|---|
-| `DocumentalQueryInput` + `args_schema` | `vector_retriever_tool.py` | El LLM recibe un JSON Schema estricto al invocar la herramienta RAG; Pydantic valida `min_length=3` y `max_length=300` antes de ejecutar la busqueda |
-| `try/except` en `consultar_base_documental` | `vector_retriever_tool.py` | Fallos de red, timeout o error de embeddings devuelven `[HERRAMIENTA_ERROR]` legible; el agente responde cortesmente en lugar de propagar la excepcion |
-| `AgentResponseSchema` + `response_format` | `qa_system.py` | El agente emite JSON validado con `answer`, `tool_was_called` y `confidence` en lugar de texto libre |
-| Campo `confidence` en `QAResponse` | `qa_system.py` | Cada respuesta incluye el nivel de confianza (`high` / `medium` / `low` / `unknown`) trazable por la UI y los tests |
+| Documento | Contenido |
+|---|---|
+| [`docs/informe_tecnico_final.md`](docs/informe_tecnico_final.md) | Informe unificado Módulos 1-2-3, arquitectura completa |
+| [`docs/definicion_alcance.md`](docs/definicion_alcance.md) | Alcance del sistema y preguntas de validación para N8N |
+| [`docs/GUIA_RAPIDA.md`](docs/GUIA_RAPIDA.md) | Inicio rápido, endpoints y referencia de comandos |
+| [`docs/hitl_middleware.md`](docs/hitl_middleware.md) | Documentación técnica del middleware HITL |
+| [`docs/rag_vectorial.md`](docs/rag_vectorial.md) | Construcción del índice RAG vectorial |
+| [`docs/informe_modulo_2.md`](docs/informe_modulo_2.md) | Informe de sustentación Módulo 2 |
