@@ -50,6 +50,21 @@ from .paths import (
 load_dotenv()
 
 
+_SOCIAL_INTERACTION_RE = re.compile(
+    r"^\s*("
+    r"hola|hey|hi|hello"
+    r"|buenas?|buenos?\s+(d[ií]as?|tardes?|noches?)"
+    r"|me\s+llamo(\s+\w+)?"
+    r"|mi\s+nombre\s+es(\s+\w+)?"
+    r"|soy\s+\w+"
+    r"|gracias|muchas\s+gracias|de\s+nada"
+    r"|ok|okay|entendido|perfecto|excelente|genial|claro|por\s+supuesto"
+    r"|adi[oó]s|hasta\s+luego|hasta\s+pronto|chao|bye"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 HITL_CRITICAL_PATTERNS: list[str] = [
     r"precio[s]?\b",
     r"tarifa[s]?\b",
@@ -126,8 +141,14 @@ Invoca la herramienta RAG para cualquier pregunta factual sobre la empresa:
   NIT, fecha de creacion, empleo, visitas a planta, horarios, marcas, productos,
   historia, sostenibilidad, bienestar animal, procesos, gobierno corporativo.
 
-No invoques la herramienta para saludos, aclaraciones de alcance del asistente
-o preguntas completamente vacias sin referente factual.
+NO invoques la herramienta para:
+- Saludos, despedidas, agradecimientos o cortesias: "hola", "buenos dias",
+  "gracias", "hasta luego", etc.
+- Presentaciones del usuario: "me llamo X", "soy X", "mi nombre es X".
+- Preguntas sobre el alcance del asistente o preguntas vacias sin referente factual.
+
+Para estas interacciones responde directamente y asigna confidence = "high".
+Son interacciones sociales atendidas correctamente, NO son consultas de baja confianza.
 
 Formulacion de consultas:
 - Usa terminos concretos y breves: "telefono Rica servicio" > "cual es el telefono".
@@ -224,8 +245,13 @@ class AgentResponseSchema(BaseModel):
     confidence: str = Field(
         default="unknown",
         description=(
-            "Nivel de confianza en la respuesta: 'high' (evidencia documental directa), "
-            "'medium' (inferencia razonable), 'low' (sin evidencia suficiente)."
+            "Nivel de confianza en la respuesta. Usa exactamente uno de estos valores: "
+            "'high': hay evidencia documental directa en los fragmentos recuperados, "
+            "O la respuesta es un saludo, presentacion del usuario, agradecimiento u "
+            "otra interaccion social que no requiere busqueda documental. "
+            "'medium': inferencia razonable basada en evidencia parcial. "
+            "'low': SOLO cuando el usuario hizo una pregunta factual sobre la empresa "
+            "y NO se encontro evidencia suficiente en la base documental."
         ),
     )
 
@@ -572,6 +598,10 @@ class CarnicosQASystem:
                     ai_messages[-1].content if ai_messages else "Sin respuesta del agente."
                 )
                 confidence = "unknown"
+
+            # Interacciones sociales (saludos, presentaciones, cortesías) nunca escalan.
+            if confidence == "low" and _SOCIAL_INTERACTION_RE.match(question.strip()):
+                confidence = "high"
 
             response = QAResponse(
                 answer=str(final_answer),
